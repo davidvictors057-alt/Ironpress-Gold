@@ -1,0 +1,95 @@
+Você é um engenheiro de software sênior. O projeto IRONPRESS GOLD já existe (React + TypeScript + Tailwind + React Router + Recharts + localStorage). Agora você deve EVOLUIR o protótipo, adicionando as funcionalidades abaixo, SEM REWRITE COMPLETO – apenas adicione/ajuste arquivos e componentes.
+
+## IDENTIDADE VISUAL E REGRAS DE NEGÓCIO (OBRIGATÓRIO)
+- Fundo #0A0A0A, cards #1A1A1A, dourado #F5B700.
+- Modalidade EQUIPADO F8 sempre em PRIMEIRO lugar (seletores, cards, gráficos).
+- Narrativa principal: "Busca pelo Bicampeonato Mundial" (Arnold Classic e Olympia Brasil, ambos F8).
+- Metas: F8 280kg → 300kg; RAW 190kg → 210kg (editáveis).
+
+## TAREFA 1: ANÁLISE BIOMECÂNICA REAL (MEDIAPIPE) – PRIORIDADE MÁXIMA
+Adicione a capacidade de analisar vídeos já gravados usando MediaPipe Pose Landmarker (local, sem backend).
+
+### Passos técnicos:
+1. Instale `@mediapipe/tasks-vision` e `dexie`.
+2. Baixe o modelo `pose_landmarker.task` (oficial) e coloque em `public/models/`.
+3. Crie os arquivos:
+   - `src/services/db/db.ts`: configure Dexie com stores `media` (blobs), `thumbnails`, `analysis`.
+   - `src/services/biomech/poseLandmarkerService.ts`: inicialização singleton do PoseLandmarker.
+   - `src/services/biomech/videoSampler.ts`: função que processa vídeo usando `requestVideoFrameCallback`, amostra a cada N frames, chama `detectForVideo()` e extrai landmarks (ombro, cotovelo, punho – índices 11-16).
+   - `src/services/biomech/benchMetrics.ts`: calcula ângulos dos cotovelos, simetria, velocidade vertical dos punhos, estima pausa (janela de velocidade ~0 no ponto mais baixo).
+   - `src/services/biomech/reportBuilder.ts`: gera nota (0-100), flags (ex: "assimetria >8°", "pausa curta"), relatório textual com base nas regras GPC (START/PRESS/RACK, proibido retrocesso).
+4. Na tela de Vídeos:
+   - Ao clicar em "Analisar", exibir overlay de progresso (processamento pode demorar alguns segundos).
+   - Chamar o pipeline, salvar o resultado no Dexie (store `analysis`), e exibir o relatório (score, pontos fortes/atenção, sugestões).
+   - Permitir reanalisar e comparar com análises anteriores.
+5. Aviso obrigatório na UI: "Análise estimada – posicione a câmera lateral ou 45° para melhor precisão."
+
+## TAREFA 2: PROTOCOLO HORMONAL COM CÁLCULO AUTOMÁTICO
+Adicione uma nova seção em "Saúde" (ou nova aba) para gerenciar ciclos hormonais.
+
+### Modelo de dados (localStorage):
+- Ciclo → semanas → medicamentos.
+- Cada medicamento: nome, concentração (mg/ml ou mg/tab), dose (ml ou tab), frequência por semana.
+- Cálculo automático: mg/semana = concentração * dose * frequência. Soma total da semana em destaque dourado.
+- CRUD completo: adicionar/editar/excluir semanas e medicamentos. Opção "duplicar semana anterior".
+
+### UI:
+- Accordion por semana, total em dourado.
+- Modal para adicionar/editar medicamento (validação de campos).
+- Persistência em localStorage (dados pequenos).
+
+## TAREFA 3: CONQUISTAS CLICÁVEIS COM FOTO/VIDEO (INDEXEDDB)
+Transforme os cards de conquistas (Campeão Mundial, Recordista F8, Medalhas) em elementos clicáveis.
+
+### Funcionalidades:
+- Ao clicar, abre modal com detalhes (nome, data, local, peso, anotações) e upload de foto/vídeo.
+- Fotos e vídeos são salvos como Blob no IndexedDB (Dexie, store `media`). Thumbnails em store `thumbnails`.
+- Gere thumbnail para vídeos usando canvas (seek no primeiro frame).
+- Exiba uma "Linha do tempo" das conquistas no Dashboard (feed cronológico com thumbnails).
+- Os metadados da conquista (texto) permanecem em localStorage, referenciando `mediaId`.
+
+## TAREFA 4: CRUD COMPLETO EM TODAS AS TELAS
+Padronize a edição em:
+- **Treinos**: adicionar/editar/excluir linhas (data, modalidade, carga alvo, carga realizada, RPE). Atualizar gráficos e tabela automaticamente.
+- **Suplementos**: adicionar/editar/excluir (nome, dose, unidade, horário, estoque). Destaque dourado se estoque <20 dias.
+- **Campeonatos**: adicionar/editar/excluir (nome, data, modalidade, meta). O simulador de tentativas (abertura, segunda, terceira) deve ser salvo junto.
+
+## TAREFA 5: IA CONTEXTUAL LOCAL (SEM API EXTERNA)
+Implemente um motor de regras heurísticas que alimente o botão "Perguntar à IA" (já existente nas telas).
+
+### Regras (exemplos):
+- Se média de percentual de alcance nos últimos 3 treinos F8 >98% → "Excelente consistência, mantenha o foco na pausa."
+- Se dor no cotovelo >4 e queda de performance → "Sugiro reduzir volume temporariamente e fortalecer extensores."
+- Se faltam menos de 4 semanas para o Arnold e a meta de 300kg está distante (>10kg) → "Priorize treinos de força máxima e técnica com camisa."
+- Use sempre o nome "Ironside" e referencie o bicampeonato.
+
+### Implementação:
+- Crie `src/services/coachAI/ruleEngine.ts` que lê dados do localStorage (últimos treinos, dores, campeonatos, análises biomecânicas) e retorna resposta em texto.
+- O chat já existente deve chamar essa engine.
+
+## TAREFA 6: PERSISTÊNCIA ROBUSTA E BACKUP
+- Solicite `navigator.storage.persist()` ao iniciar.
+- Implemente export/import: botão que baixa um JSON com todos os metadados (localStorage + referências de mídia). (Opcional: exportar mídia em zip, mas pode ficar para depois).
+- No primeiro load, se não houver dados, crie seed (perfil, treinos mock, campeonatos, suplementos, conquistas iniciais).
+
+## TAREFA 7: COLABORAÇÃO COM DOIS TREINADORES (OPCIONAL, ALTA PRIORIDADE)
+- Além do modo treinador atual (código 123456), permita dois perfis: "Coach Técnico" (vídeos/comentários) e "Coach Programação" (treinos/campeonatos).
+- Gere códigos diferentes e logs separados.
+- No "Meet Day Mode" (nova tela rápida), implemente timer de 1 minuto para envio de 2ª/3ª tentativa (regra GPC) e impeça alteração após enviado.
+
+## ESTRUTURA DE ARQUIVOS A CRIAR/MODIFICAR (resumo)
+- `src/services/db/db.ts` (Dexie)
+- `src/services/biomech/*` (poseLandmarker, videoSampler, benchMetrics, reportBuilder)
+- `src/services/coachAI/ruleEngine.ts`
+- `src/routes/Health.tsx` (adicionar seção Protocolo Hormonal)
+- `src/components/achievements/AchievementModal.tsx` (novo)
+- `src/components/hormone/WeekCard.tsx`, `MedFormModal.tsx`
+- `src/hooks/useCrudModal.ts` (padronizar CRUD)
+- `src/services/storage/backupService.ts`
+
+## ENTREGÁVEL
+- Código funcional que RODA (npm run dev).
+- O protótipo atual deve continuar funcionando, apenas ganhando as novas features.
+- Comentários indicando onde futuramente será substituído por Gemini e Supabase.
+
+Agora, gere o código necessário (priorize a TAREFA 1 – biomecânica – e a TAREFA 2 – protocolo hormonal) e forneça instruções claras de como integrar ao projeto existente.
