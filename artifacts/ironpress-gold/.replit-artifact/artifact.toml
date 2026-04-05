@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "IRONPRESS GOLD"
+version = "1.0.0"
+id = "artifacts/ironpress-gold"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18854
+
+[services.development]
+run = "pnpm --filter @workspace/ironpress-gold run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ironpress-gold", "run", "build" ]
+publicDir = "artifacts/ironpress-gold/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18854"
+BASE_PATH = "/"

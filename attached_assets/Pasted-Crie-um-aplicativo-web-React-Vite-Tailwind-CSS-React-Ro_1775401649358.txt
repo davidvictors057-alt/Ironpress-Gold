@@ -1,0 +1,91 @@
+Crie um aplicativo web (React + Vite + Tailwind CSS + React Router DOM + Recharts + Lucide React) para o powerlifter profissional **Leonardo "Ironside" Rodrigues**, especialista em supino raw e equipado F8. O aplicativo deve ter identidade visual exclusiva: fundo preto (#0A0A0A), cards em cinza escuro (#1A1A1A), texto branco (#FFFFFF), e **dourado (#F5B700)** para botões, ícones, bordas, destaques de gráficos e elementos de status. O dourado deve remeter a conquistas, recordes e campeonatos. O nome "IRONSIDE" deve aparecer no topo (logotipo estilizado) e em algumas saudações.
+
+## Perfil do atleta (dados mockados, baseados na realidade)
+- Nome completo: Leonardo Rodrigues
+- Apelido/ID: Ironside
+- Peso: 95kg (categoria até 100kg)
+- Supino RAW: atual 190kg, meta 210kg (recorde pessoal)
+- Supino Equipado F8: atual 280kg, meta 300kg (recordista brasileiro F8)
+- Conquistas: Campeão Mundial GPC Brasil, Recordista Brasileiro F8, múltiplas medalhas (🥇🥈🥉)
+- Próximos campeonatos:
+  - Arnold Classic Brasil - 26 de abril de 2025 (modalidade RAW) - meta: 210kg
+  - Olympia Brasil 2026 - 15 de outubro de 2026 (modalidade Equipado F8) - meta: 300kg
+
+## Identidade visual obrigatória
+- **Cores primárias:** Preto (#0A0A0A) para fundo geral; dourado (#F5B700) para elementos de ação, gráficos, bordas ativas, badges de recorde.
+- **Cores secundárias:** Cinza escuro (#1A1A1A) para cards; cinza médio (#2A2A2A) para hover; texto branco (#FFFFFF) e cinza claro (#B0B0B0) para subtítulos.
+- **Tipografia:** Inter ou Montserrat, pesos bold para títulos, regular para corpo.
+- **Ícones:** Lucide React, na cor dourada quando representam ações importantes (ex: troféu, coroa, fogo).
+- **Efeitos:** Bordas arredondadas (border-radius: 12px), sombras sutis em cards, botões com gradiente dourado ou borda dourada.
+- **Avatar do atleta:** usar um placeholder com iniciais "IR" dentro de um círculo dourado ou uma silhueta de powerlifter.
+
+## Estrutura de navegação (menu inferior com 6 abas, ícones dourados quando ativos)
+1. **Início** (Dashboard)
+2. **Treinos**
+3. **Vídeos**
+4. **Campeonatos**
+5. **Saúde & Medicamentos**
+6. **Treinador** (Colaboração)
+
+## Tela 1: Dashboard (Início) – Estilo Ironside
+- **Header:** "IRONSIDE" em letras garrafais douradas, com subtítulo "Leonardo Rodrigues | 95kg | Categoria 100kg".
+- **Card de boas-vindas:** "Bem-vindo de volta, Campeão Mundial! 🏆" com fundo preto e borda dourada.
+- **Card "Próximo campeonato":** Arnold Classic Brasil, contagem regressiva em dias (calcular a partir de 1º de abril de 2025). Exibir meta: 210kg RAW. Ícone de troféu dourado.
+- **Card "Treino de hoje":** "Supino reto RAW - 4x6 @ 185kg, RPE 8. Alvo: 190kg". Botão "Registrar treino" com fundo dourado e texto preto.
+- **Gráfico de evolução da 1RM (últimas 8 semanas):** dois datasets (RAW e Equipado). Cores: linha RAW em dourado, linha Equipado em laranja (#FF8C00). Eixo X: semanas. Eixo Y: kg. Fundo do gráfico transparente, texto branco.
+- **Badge de recorde:** "Recordista Brasileiro F8 - 280kg" em destaque dourado.
+- **Botão "Upload de vídeo":** borda dourada, ícone de câmera, alerta mockado.
+
+## Tela 2: Treinos – Com seletor RAW/Equipado
+- **Seletor** com botões: "RAW" e "EQUIPADO F8". O ativo fica com fundo dourado e texto preto.
+- **Tabela dos últimos 7 treinos** (data, carga alvo, carga realizada, % alcance, RPE). Dados mockados coerentes com 190kg/280kg.
+- **Gráfico de barras:** para cada treino, barra cinza (alvo) e barra dourada (realizado). Se percentual >=99% a barra real fica dourada brilhante; entre 95-98% dourado opaco; <95% laranja.
+- **Card de insight:** "Você atingiu 99%+ em 6 dos 8 últimos treinos RAW. Consistência de campeão."
+- **Botão "Perguntar à IA"** (modal mockado: "Em breve, análise real com Gemini – prepare-se para ditas do Ironside!")
+
+## Tela 3: Vídeos – Biblioteca de movimentos
+- **Lista de 4 vídeos mockados** com thumbnail placeholder (imagem cinza + ícone de play dourado). Cada vídeo mostra título, data, modalidade.
+  Ex: "Supino RAW - 190kg (recorde)" - 01/04/2025
+  "Supino Equipado F8 - 280kg (recorde brasileiro)" - 28/03/2025
+- **Ao clicar:** modal com player simulado, botões:
+  - "Analisar movimento" (alerta mockado: "Análise biomecânica em desenvolvimento – em breve, IA detectará ângulo de cotovelo.")
+  - "Compartilhar com treinador" (gera código aleatório, ex: "Código: IRON123")
+  - Campo de comentários (textarea) com borda dourada, botão "Salvar comentário" (salva localmente).
+- **Destaque:** ícone de coroa dourada ao lado do vídeo de recorde.
+
+## Tela 4: Campeonatos – Foco em Arnold e Olympia
+- **Cards expansíveis** com borda dourada.
+- **Arnold Classic (RAW):**
+  - Gráfico de progressão (meta 210kg vs estimado atual 205kg). Linha pontilhada dourada para meta, linha sólida preta com marcadores dourados para real.
+  - Simulador de tentativas: três campos (abertura, segunda, terceira). Ao simular, mostrar análise: "Com base no histórico, abertura 195kg = 98% de acerto."
+  - Botão "IA do campeonato" (chat mockado com respostas pré-definidas, ex: "Devo arriscar 210kg?" → "Seu recorde é 210kg em treino, mas em competição a adrenalina ajuda. Vá com confiança, Ironside!")
+- **Olympia Brasil (Equipado):**
+  - Meta 300kg, gráfico otimista (ritmo atual suficiente).
+  - Badge: "Busca pelo tri mundial"
+
+## Tela 5: Saúde & Medicamentos
+- **Seção Medicamentos:** lista com Creatina, Ômega-3, Vitamina D. Cada item com checkbox e indicador de estoque. Destaque em dourado quando estoque <20 dias.
+- **Seção Dor e Fadiga:** sliders 0-10 para ombro, cotovelo, punho, fadiga. Botão "Salvar" dourado.
+- **Gráfico de correlação:** barras mostrando como a dor afeta o percentual de alcance (dados mockados: dor alta → percentual baixo). Cores: barras vermelhas para dor, douradas para performance.
+- **Insight automático:** "Quando a dor no cotovelo ultrapassou 4, seu rendimento caiu 7%. Fortaleça os extensores."
+
+## Tela 6: Treinador (Colaboração)
+- **Modo Atleta:**
+  - Botão "Gerar código de acesso" (exibe "Código: IRONSIDE2025" – válido 7 dias).
+  - Log de acessos mockado: "15/03/2025 - Treinador João acessou e comentou vídeo."
+- **Modo Treinador (demo com código fixo "123456"):**
+  - Campo para inserir código. Ao digitar "123456", a interface muda para visão limitada (apenas vídeos + comentários). Exibir alerta: "Modo treinador ativo – você só pode visualizar e comentar vídeos do Ironside."
+  - Lista de vídeos igual à tela 3, com opção de adicionar comentários. Botão "Sair do modo treinador" (retorna à visão completa).
+
+## Requisitos técnicos (obrigatório para funcionar no Replit free)
+- **Tecnologias:** React, Vite, Tailwind CSS, React Router DOM, Recharts, Lucide React.
+- **Estado:** useState e useEffect para dados locais; localStorage opcional para persistir comentários e registros de dor.
+- **Arquivo mockData.js:** exportar arrays com dados de treinos, vídeos, campeonatos, medicamentos, conforme valores fornecidos.
+- **Responsividade:** mobile-first (largura máxima 430px, centralizado em desktop). Fundo preto em toda a aplicação.
+- **Alerta simulado:** todos os botões que exigiriam backend real (upload, análise IA, salvamento em nuvem) devem exibir `alert("Funcionalidade em desenvolvimento – versão demonstrativa Ironside")`. Exceto comentários e registros de dor (salvos localmente).
+- **Performance:** sem erros no console, carregamento rápido.
+
+## Entregável final
+Um projeto completo que, ao rodar `npm install && npm run dev`, abra um navegador com o aplicativo "Ironside Power Tracker" totalmente navegável, com todas as telas, gráficos, dados mockados coerentes com a realidade do atleta (190kg raw, 280kg equipado, recordes, campeonatos), e com a identidade visual preta e dourada que transmite a força e o prestígio de um campeão mundial.
+
+**Cole este prompt no Replit e aguarde a geração. Ajustes manuais podem ser necessários, mas a base será sólida e impressionante.**
