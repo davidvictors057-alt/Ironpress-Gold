@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Plus, Edit2, Trash2, Copy } from "lucide-react";
+import { supabase } from "../../lib/supabase";
 import MedFormModal, { Medication } from "./MedFormModal";
 
 export interface HormonalWeek {
@@ -10,7 +11,7 @@ export interface HormonalWeek {
 
 interface Props {
   week: HormonalWeek;
-  onUpdate: (week: HormonalWeek) => void;
+  onUpdate: () => Promise<void>; // Retorna promise para await
   onDelete: () => void;
   onDuplicate: () => void;
 }
@@ -20,26 +21,55 @@ export default function WeekCard({ week, onUpdate, onDelete, onDuplicate }: Prop
   const [showAddMed, setShowAddMed] = useState(false);
   const [editingMed, setEditingMed] = useState<Medication | null>(null);
 
-  const totalMgWeek = week.medications.reduce((acc, m) => acc + m.concentration * m.dose * m.frequency, 0);
+  const medications = week.medications || [];
+  const totalMgWeek = medications.reduce((acc, m) => acc + (Number(m.concentration) || 0) * (Number(m.dose) || 0) * (Number(m.frequency) || 0), 0);
 
-  function addMedication(med: Medication) {
-    const updated = { ...week, medications: [...week.medications, med] };
-    onUpdate(updated);
-    setShowAddMed(false);
+  async function addMedication(med: Medication) {
+    try {
+      const { error } = await supabase.from('hormone_medications').insert({
+        week_id: week.id,
+        name: med.name,
+        concentration: med.concentration,
+        concentration_unit: med.concentrationUnit,
+        dose: med.dose,
+        dose_unit: med.doseUnit,
+        frequency: med.frequency
+      });
+      if (error) throw error;
+      await onUpdate();
+      setShowAddMed(false);
+    } catch (e: any) {
+      alert("Erro ao adicionar medicação: " + e.message);
+    }
   }
 
-  function editMedication(med: Medication) {
-    const updated = {
-      ...week,
-      medications: week.medications.map(m => m.id === med.id ? med : m),
-    };
-    onUpdate(updated);
-    setEditingMed(null);
+  async function editMedication(med: Medication) {
+    try {
+      const { error } = await supabase.from('hormone_medications').update({
+        name: med.name,
+        concentration: med.concentration,
+        concentration_unit: med.concentrationUnit,
+        dose: med.dose,
+        dose_unit: med.doseUnit,
+        frequency: med.frequency
+      }).eq('id', med.id);
+      if (error) throw error;
+      await onUpdate();
+      setEditingMed(null);
+    } catch (e: any) {
+      alert("Erro ao editar medicação: " + e.message);
+    }
   }
 
-  function deleteMedication(id: string) {
-    const updated = { ...week, medications: week.medications.filter(m => m.id !== id) };
-    onUpdate(updated);
+  async function deleteMedication(id: string) {
+    if (!confirm("Excluir medicação?")) return;
+    try {
+      const { error } = await supabase.from('hormone_medications').delete().eq('id', id);
+      if (error) throw error;
+      await onUpdate();
+    } catch (e: any) {
+      alert("Erro ao deletar medicação: " + e.message);
+    }
   }
 
   return (

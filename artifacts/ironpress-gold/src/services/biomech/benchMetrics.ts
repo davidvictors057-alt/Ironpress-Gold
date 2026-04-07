@@ -68,33 +68,58 @@ export function computeBenchMetrics(frames: FrameLandmarks[]): BenchMetrics {
   const minY = Math.min(...wristYs);
   const maxY = Math.max(...wristYs);
 
-  const PAUSE_THRESHOLD = 0.02;
-  let pauseStart = -1;
-  let pauseDurationMs = 0;
+  const PAUSE_THRESHOLD = 0.018; // Meio-termo entre 0.02 e 0.015
+  let currentPauseStart = -1;
+  let maxPauseDurationMs = 0;
+  
   for (let i = 0; i < speeds.length; i++) {
     const wristY = wristYs[i + 1];
-    const nearBottom = wristY < minY + (maxY - minY) * 0.3;
-    if (nearBottom && Math.abs(speeds[i]) < PAUSE_THRESHOLD) {
-      if (pauseStart === -1) pauseStart = i;
+    // Meio-termo: 22% mais baixos do movimento
+    const nearPeito = wristY < minY + (maxY - minY) * 0.22;
+    
+    if (nearPeito && Math.abs(speeds[i]) < PAUSE_THRESHOLD) {
+      if (currentPauseStart === -1) currentPauseStart = i;
     } else {
-      if (pauseStart !== -1) {
-        pauseDurationMs += frames[i + 1].timestampMs - frames[pauseStart].timestampMs;
-        pauseStart = -1;
+      if (currentPauseStart !== -1) {
+        const duration = frames[i].timestampMs - frames[currentPauseStart].timestampMs;
+        if (duration > maxPauseDurationMs) maxPauseDurationMs = duration;
+        currentPauseStart = -1;
       }
     }
   }
+  // Verificar se acabou durante uma pausa
+  if (currentPauseStart !== -1) {
+    const duration = frames[frames.length - 1].timestampMs - frames[currentPauseStart].timestampMs;
+    if (duration > maxPauseDurationMs) maxPauseDurationMs = duration;
+  }
 
-  // Count reps: count direction changes in wrist Y
+  // Contagem de repetições robusta (Máquina de estados)
   let repCount = 0;
-  let direction = 0;
-  for (const s of speeds) {
-    const newDir = s > 0.05 ? 1 : s < -0.05 ? -1 : 0;
-    if (newDir !== 0 && newDir !== direction) {
-      if (direction !== 0) repCount++;
-      direction = newDir;
+  let phase: "START" | "DESCENDING" | "ASCENDING" = "START";
+  const speedThreshold = 0.08;
+  const posRange = maxY - minY;
+
+  for (let i = 0; i < speeds.length; i++) {
+    const s = speeds[i];
+    const wristY = wristYs[i+1];
+
+    if (phase === "START" && s > speedThreshold) {
+      phase = "DESCENDING";
+    } else if (phase === "DESCENDING" && s < -speedThreshold && wristY < minY + posRange * 0.4) {
+      // Começou a subir após descer pelo menos 60% do curso (Y é invertido em alguns sistemas, mas aqui minY é o fundo)
+      // Ajuste: se wristY está subindo e já passou do fundo
+      phase = "ASCENDING";
+      repCount++;
+    } else if (phase === "ASCENDING" && wristY > maxY - posRange * 0.3) {
+      // Voltou para o topo
+      phase = "START";
     }
   }
-  repCount = Math.floor(repCount / 2);
+
+  // Fallback para 1 repetição se houver movimento significativo mas a máquina de estados falhou
+  if (repCount === 0 && posRange > 0.1 && maxPauseDurationMs > 300) {
+    repCount = 1;
+  }
 
   return {
     leftElbowAngles,
@@ -103,8 +128,8 @@ export function computeBenchMetrics(frames: FrameLandmarks[]): BenchMetrics {
     avgRightElbow: avgRight,
     symmetry,
     wristVerticalSpeeds: speeds,
-    pauseDetected: pauseDurationMs > 500,
-    pauseDurationMs,
+    pauseDetected: maxPauseDurationMs > 650, // Meio-termo entre 500 e 800
+    pauseDurationMs: maxPauseDurationMs,
     repCount,
     minBarPosition: minY,
     maxBarPosition: maxY,

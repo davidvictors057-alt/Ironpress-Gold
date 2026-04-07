@@ -15,8 +15,7 @@ const queryClient = new QueryClient();
 
 function AppInit() {
   useEffect(() => {
-    // Tarefa 6: solicitar persistência de storage e seed dados iniciais
-    seedInitialData();
+    // seedInitialData(); // Comentado pois agora usamos Supabase
     requestPersistentStorage().catch(() => {});
   }, []);
   return null;

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { supabase } from "../lib/supabase";
 import { Heart, AlertTriangle, CheckSquare, Plus, FlaskConical, Trash2, Edit2, Download, Upload } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
@@ -10,7 +11,11 @@ const HEALTH_KEY = "ironside_health_data";
 const SUPPS_KEY = "ironside_supplements";
 const HORMONAL_KEY = "ironside_hormonal_cycles";
 
-const healthCorrelation = [
+type HealthData = { shoulder: number; elbow: number; wrist: number; fatigue: number };
+type Supplement = { id: string; name: string; dose: string; unit: string; schedule: string; stock: number };
+type ChartPoint = { session: string; pain: number; performance: number };
+
+const defaultChartData = [
   { session: "S1", pain: 2, performance: 99 },
   { session: "S2", pain: 3, performance: 97 },
   { session: "S3", pain: 5, performance: 88 },
@@ -20,30 +25,7 @@ const healthCorrelation = [
   { session: "S7", pain: 6, performance: 84 },
 ];
 
-type HealthData = { shoulder: number; elbow: number; wrist: number; fatigue: number };
-type Supplement = { id: number; name: string; dose: string; unit: string; schedule: string; stock: number };
-
-function loadHealth(): HealthData {
-  try { return JSON.parse(localStorage.getItem(HEALTH_KEY) || "{}"); } catch { return { shoulder: 0, elbow: 0, wrist: 0, fatigue: 0 }; }
-}
-
-function loadSupplements(): Supplement[] {
-  try {
-    return JSON.parse(localStorage.getItem(SUPPS_KEY) || "[]");
-  } catch { return []; }
-}
-
-function saveSupplements(supps: Supplement[]) {
-  localStorage.setItem(SUPPS_KEY, JSON.stringify(supps));
-}
-
-function loadHormonalCycles(): HormonalWeek[] {
-  try { return JSON.parse(localStorage.getItem(HORMONAL_KEY) || "[]"); } catch { return []; }
-}
-
-function saveHormonalCycles(cycles: HormonalWeek[]) {
-  localStorage.setItem(HORMONAL_KEY, JSON.stringify(cycles));
-}
+// Logic migrated to Supabase
 
 function PainSlider({ label, value, onChange, testId }: { label: string; value: number; onChange: (v: number) => void; testId: string }) {
   const color = value <= 3 ? "#4ade80" : value <= 6 ? "#F5B700" : "#ef4444";
@@ -99,53 +81,247 @@ function SuppModal({ initial, onSave, onClose }: {
 
 export default function Health() {
   const [tab, setTab] = useState<"health" | "hormonal">("health");
-  const [health, setHealth] = useState<HealthData>(loadHealth);
+  const [health, setHealth] = useState<HealthData>({ shoulder: 0, elbow: 0, wrist: 0, fatigue: 0 });
   const [saved, setSaved] = useState(false);
-  const [supplements, setSupplements] = useState<Supplement[]>(loadSupplements);
+  const [supplements, setSupplements] = useState<Supplement[]>([]);
+  const [loadingSupps, setLoadingSupps] = useState(true);
   const [editSupp, setEditSupp] = useState<Supplement | null>(null);
   const [showAddSupp, setShowAddSupp] = useState(false);
-  const [hormonalWeeks, setHormonalWeeks] = useState<HormonalWeek[]>(loadHormonalCycles);
+  const [hormonalWeeks, setHormonalWeeks] = useState<HormonalWeek[]>([]);
+  const [chartData, setChartData] = useState<ChartPoint[]>([]);
 
-  useEffect(() => { setHealth(loadHealth()); }, []);
-  useEffect(() => { setSupplements(loadSupplements()); }, []);
+  useEffect(() => {
+    fetchSupplements();
+    fetchHealthMetrics();
+    fetchHormonalProtocol();
+    fetchCorrelationData();
+  }, []);
 
-  function updateHealth(key: keyof HealthData, val: number) { setHealth(prev => ({ ...prev, [key]: val })); setSaved(false); }
-  function saveHealth() { localStorage.setItem(HEALTH_KEY, JSON.stringify(health)); setSaved(true); setTimeout(() => setSaved(false), 2000); }
-
-  function addSupp(s: Supplement) { const u = [...supplements, s]; setSupplements(u); saveSupplements(u); }
-  function updateSupp(s: Supplement) { const u = supplements.map(x => x.id === s.id ? s : x); setSupplements(u); saveSupplements(u); }
-  function deleteSupp(id: number) { const u = supplements.filter(x => x.id !== id); setSupplements(u); saveSupplements(u); }
-
-  function addWeek() {
-    const wk: HormonalWeek = { id: `wk_${Date.now()}`, label: `Semana ${hormonalWeeks.length + 1}`, medications: [] };
-    const updated = [...hormonalWeeks, wk];
-    setHormonalWeeks(updated);
-    saveHormonalCycles(updated);
+  async function fetchHealthMetrics() {
+    try {
+      const { data, error } = await supabase
+        .from('health_metrics')
+        .select('*')
+        .order('created_at', { descending: false })
+        .limit(1)
+        .single();
+      if (error && error.code !== 'PGRST116') throw error;
+      if (data) {
+        setHealth({
+          shoulder: data.shoulder,
+          elbow: data.elbow,
+          wrist: data.wrist,
+          fatigue: data.fatigue
+        });
+      }
+    } catch (e) {
+      console.error("Error fetching health metrics:", e);
+    }
   }
 
-  function updateWeek(week: HormonalWeek) {
-    const updated = hormonalWeeks.map(w => w.id === week.id ? week : w);
-    setHormonalWeeks(updated);
-    saveHormonalCycles(updated);
+  async function updateHealth(key: keyof HealthData, val: number) {
+    setHealth(prev => ({ ...prev, [key]: val }));
+    setSaved(false);
   }
 
-  function deleteWeek(id: string) {
-    const updated = hormonalWeeks.filter(w => w.id !== id);
-    setHormonalWeeks(updated);
-    saveHormonalCycles(updated);
+  async function fetchCorrelationData() {
+    try {
+      const { data: metrics } = await supabase.from('health_metrics').select('*').order('created_at', { descending: true }).limit(7);
+      const { data: workouts } = await supabase.from('workouts').select('*').order('date', { descending: true }).limit(7);
+      
+      if (!metrics || metrics.length === 0) return;
+
+      const formatted = metrics.reverse().map((m: any, i: number) => {
+        const w = workouts ? workouts[i] : null;
+        // Simular performance baseada no RPE do treino ou carga
+        const perf = w ? (100 - (w.rpe || 7) * 2) : (90 + Math.random() * 10);
+        return {
+          session: `S${i+1}`,
+          pain: Math.max(m.shoulder, m.elbow, m.wrist),
+          performance: Math.round(perf)
+        };
+      });
+      setChartData(formatted);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
-  function duplicateWeek(id: string) {
+  async function saveHealth() {
+    try {
+      setSaved(false);
+      const { error } = await supabase.from('health_metrics').insert({
+        shoulder: health.shoulder,
+        elbow: health.elbow,
+        wrist: health.wrist,
+        fatigue: health.fatigue,
+        created_at: new Date().toISOString()
+      });
+      if (error) throw error;
+      setSaved(true);
+      fetchCorrelationData();
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e: any) {
+      alert("Erro ao salvar métricas: " + e.message);
+    }
+  }
+
+  async function fetchHormonalProtocol() {
+    try {
+      const { data: weeks, error: wError } = await supabase
+        .from('hormone_weeks')
+        .select(`
+          id,
+          label,
+          hormone_medications (
+            id,
+            name,
+            concentration,
+            concentration_unit,
+            dose,
+            dose_unit,
+            frequency
+          )
+        `)
+        .order('created_at', { ascending: true });
+
+      if (wError) throw wError;
+      
+      setHormonalWeeks(weeks.map(w => ({
+        id: w.id,
+        label: w.label,
+        medications: w.hormone_medications.map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          concentration: m.concentration,
+          concentrationUnit: m.concentration_unit,
+          dose: m.dose,
+          doseUnit: m.dose_unit,
+          frequency: m.frequency
+        }))
+      })));
+    } catch (e) {
+      console.error("Error fetching hormonal protocol:", e);
+    }
+  }
+
+  async function fetchSupplements() {
+    try {
+      const { data, error } = await supabase
+        .from('supplements')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setSupplements(data.map(s => ({
+        id: s.id,
+        name: s.name,
+        dose: s.dosage,
+        unit: "",
+        schedule: s.schedule,
+        stock: s.stock_days
+      })));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingSupps(false);
+    }
+  }
+
+  async function addSupp(s: any) {
+    try {
+      const { error } = await supabase.from('supplements').insert({
+        name: s.name,
+        dosage: s.dose + (s.unit ? " " + s.unit : ""),
+        schedule: s.schedule,
+        stock_days: s.stock
+      });
+      if (error) throw error;
+      await fetchSupplements();
+    } catch (e: any) {
+      alert("Erro ao adicionar: " + e.message);
+    }
+  }
+
+  async function updateSupp(s: any) {
+    try {
+      const { error } = await supabase.from('supplements').update({
+        name: s.name,
+        dosage: s.dose + (s.unit ? " " + s.unit : ""),
+        schedule: s.schedule,
+        stock_days: s.stock
+      }).eq('id', s.id);
+      if (error) throw error;
+      await fetchSupplements();
+    } catch (e: any) {
+      alert("Erro ao atualizar: " + e.message);
+    }
+  }
+
+  async function deleteSupp(id: string | number) {
+    if (!confirm("Excluir suplemento?")) return;
+    try {
+      const { error } = await supabase.from('supplements').delete().filter('id', 'eq', id);
+      if (error) throw error;
+      await fetchSupplements();
+    } catch (e: any) {
+      alert("Erro ao deletar: " + e.message);
+    }
+  }
+
+  async function addWeek() {
+    try {
+      const { error } = await supabase.from('hormone_weeks').insert({
+        label: `Semana ${hormonalWeeks.length + 1}`
+      });
+      if (error) throw error;
+      await fetchHormonalProtocol();
+    } catch (e: any) {
+      alert("Erro ao adicionar semana: " + e.message);
+    }
+  }
+
+  async function updateWeek() {
+    await fetchHormonalProtocol();
+  }
+
+  async function deleteWeek(id: string) {
+    if (!confirm("Excluir semana?")) return;
+    try {
+      // Primeiro deletar as medicações para evitar erro de FK se necessário
+      await supabase.from('hormone_medications').delete().eq('week_id', id);
+      const { error } = await supabase.from('hormone_weeks').delete().eq('id', id);
+      if (error) throw error;
+      await fetchHormonalProtocol();
+    } catch (e: any) {
+      alert("Erro ao deletar semana: " + e.message);
+    }
+  }
+
+  async function duplicateWeek(id: string) {
     const source = hormonalWeeks.find(w => w.id === id);
     if (!source) return;
-    const newWeek: HormonalWeek = {
-      id: `wk_${Date.now()}`,
-      label: `Semana ${hormonalWeeks.length + 1} (cópia)`,
-      medications: source.medications.map(m => ({ ...m, id: `med_${Date.now()}_${Math.random()}` })),
-    };
-    const updated = [...hormonalWeeks, newWeek];
-    setHormonalWeeks(updated);
-    saveHormonalCycles(updated);
+    try {
+      const { data: newW, error } = await supabase.from('hormone_weeks').insert({
+        label: `${source.label} (cópia)`
+      }).select().single();
+      if (error) throw error;
+      
+      if (source.medications.length > 0 && newW) {
+        const meds = source.medications.map(m => ({
+          week_id: newW.id,
+          name: m.name,
+          concentration: m.concentration,
+          concentration_unit: m.concentrationUnit,
+          dose: m.dose,
+          dose_unit: m.doseUnit,
+          frequency: m.frequency
+        }));
+        await supabase.from('hormone_medications').insert(meds);
+      }
+      await fetchHormonalProtocol();
+    } catch (e: any) {
+      alert("Erro ao duplicar semana: " + e.message);
+    }
   }
 
   const totalMgWeekAll = hormonalWeeks.reduce((acc, wk) => acc + wk.medications.reduce((a, m) => a + m.concentration * m.dose * m.frequency, 0), 0);
@@ -238,13 +414,13 @@ export default function Health() {
           <div className="mx-4 card-dark p-4 border border-[#2A2A2A]">
             <h3 className="text-[#F5B700] font-bold text-sm uppercase tracking-wider mb-4">Dor vs Performance</h3>
             <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={healthCorrelation} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+              <BarChart data={chartData.length > 0 ? chartData : defaultChartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2A" />
                 <XAxis dataKey="session" tick={{ fill: "#B0B0B0", fontSize: 10 }} />
                 <YAxis tick={{ fill: "#B0B0B0", fontSize: 10 }} />
                 <Tooltip contentStyle={{ backgroundColor: "#1A1A1A", border: "1px solid #F5B700", borderRadius: 8 }} labelStyle={{ color: "#F5B700" }} itemStyle={{ color: "#fff" }} />
-                <Bar dataKey="pain" name="Dor" radius={[4, 4, 0, 0]}>{healthCorrelation.map((_, i) => <Cell key={i} fill="#ef4444" />)}</Bar>
-                <Bar dataKey="performance" name="Performance %" radius={[4, 4, 0, 0]}>{healthCorrelation.map((_, i) => <Cell key={i} fill="#F5B700" />)}</Bar>
+                <Bar dataKey="pain" name="Dor" radius={[4, 4, 0, 0]}>{(chartData.length > 0 ? chartData : defaultChartData).map((_, i) => <Cell key={i} fill="#ef4444" />)}</Bar>
+                <Bar dataKey="performance" name="Performance %" radius={[4, 4, 0, 0]}>{(chartData.length > 0 ? chartData : defaultChartData).map((_, i) => <Cell key={i} fill="#F5B700" />)}</Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -252,20 +428,6 @@ export default function Health() {
           <div className="mx-4 bg-[#F5B700]/10 border border-[#F5B700]/30 rounded-xl p-4">
             <p className="text-[#F5B700] font-bold text-sm mb-1">Insight Automático</p>
             <p className="text-gray-200 text-sm">Quando a dor no cotovelo ultrapassou 4, seu rendimento caiu 7%. Fortaleça os extensores e mantenha o cotovelo aquecido antes do supino.</p>
-          </div>
-
-          {/* Backup */}
-          <div className="mx-4 card-dark border border-[#2A2A2A] p-4">
-            <h3 className="text-[#F5B700] font-bold text-sm uppercase tracking-wider mb-3">Backup de Dados</h3>
-            <div className="flex gap-2">
-              <button className="flex-1 btn-gold-outline py-2.5 text-sm flex items-center justify-center gap-2" onClick={exportBackup} data-testid="button-export-backup">
-                <Download size={15} className="text-[#F5B700]" /> Exportar JSON
-              </button>
-              <label className="flex-1 btn-gold-outline py-2.5 text-sm flex items-center justify-center gap-2 cursor-pointer" data-testid="label-import-backup">
-                <Upload size={15} className="text-[#F5B700]" /> Importar
-                <input type="file" accept=".json" className="hidden" onChange={handleImport} />
-              </label>
-            </div>
           </div>
         </>
       )}

@@ -1,27 +1,39 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { supabase } from "../lib/supabase";
 import { Trophy, Crown, ChevronDown, ChevronUp, MessageSquare, X } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from "recharts";
-import { competitions, arnoldProgressData, olympiaProgressData } from "../mockData";
+import { getGeneralTrainingFeedback, getChampionshipSimulatorInsight } from "../services/coachAI/aiCoachService";
 
-const aiResponses: Record<string, string> = {
-  "devo arriscar 210kg": "Seu recorde é 210kg em treino, mas em competição a adrenalina ajuda. Vá com confiança, Ironside! 💪",
-  "qual abertura recomendada": "Com base no histórico, uma abertura de 195kg tem 98% de acerto. Seguro e estratégico.",
-  "como está minha progressão": "Sua progressão está excelente! Você está 97% do caminho para os 210kg no Arnold.",
-  default: "Análise em desenvolvimento. Em breve teremos insights personalizados com IA real, Ironside!",
-};
-
-function SimulatorCard({ comp }: { comp: typeof competitions[0] }) {
-  const [opening, setOpening] = useState(comp.goal - 15 + "");
-  const [second, setSecond] = useState(comp.goal - 8 + "");
-  const [third, setThird] = useState(comp.goal + "");
+function SimulatorCard({ comp }: { comp: any }) {
+  const goal = comp.goal_weight || 200;
+  const [opening, setOpening] = useState(goal - 15 + "");
+  const [second, setSecond] = useState(goal - 8 + "");
+  const [third, setThird] = useState(goal + "");
   const [result, setResult] = useState<string | null>(null);
 
-  function simulate() {
-    const o = parseFloat(opening);
-    const pct = Math.round((o / (comp.goal + 5)) * 100);
-    setResult(`Abertura ${opening}kg → ${pct}% de precisão estimada. ${pct >= 95 ? "Estratégia sólida, Ironside!" : "Considere uma abertura mais conservadora."}`);
+  async function simulate() {
+    setResult("O Estrategista Ironside está analisando seus treinos...");
+    try {
+      const storedKey = localStorage.getItem('gemini_api_key') || "";
+      const storedModel = localStorage.getItem('gemini_model_id') || "gemini-1.5-flash";
+      const { data: history } = await supabase.from('workouts').select('*').order('date', { descending: true }).limit(20);
+      
+      const insight = await getChampionshipSimulatorInsight(
+        history || [],
+        comp.name,
+        comp.goal_weight || 200,
+        [parseFloat(opening), parseFloat(second), parseFloat(third)],
+        comp.modality || "RAW",
+        storedKey,
+        storedModel
+      );
+      
+      setResult(`${insight.probability}% de chance: ${insight.comment}`);
+    } catch (err) {
+      setResult("Erro na simulação neural. Tente novamente.");
+    }
   }
 
   return (
@@ -69,12 +81,33 @@ function AIChat({ onClose }: { onClose: () => void }) {
   ]);
   const [input, setInput] = useState("");
 
-  function send() {
+  async function send() {
     if (!input.trim()) return;
-    const userMsg = input.toLowerCase().trim();
-    const aiText = aiResponses[userMsg] || aiResponses.default;
-    setMessages(m => [...m, { role: "user", text: input }, { role: "ai", text: aiText }]);
+    const userText = input;
+    setMessages(m => [...m, { role: "user", text: userText }, { role: "ai", text: "Analisando estratégia de competição..." }]);
     setInput("");
+
+    try {
+      const storedKey = localStorage.getItem('gemini_api_key') || "";
+      const storedModel = localStorage.getItem('gemini_model_id') || "gemini-1.5-flash";
+      const { data: history } = await supabase.from('workouts').select('*').order('date', { descending: true }).limit(20);
+
+      const aiText = await getGeneralTrainingFeedback(
+        history || [],
+        `CONTEXTO CAMPEONATO: ${userText}`,
+        "COMPETITION",
+        storedKey,
+        storedModel
+      );
+      
+      setMessages(m => {
+        const newM = [...m];
+        newM[newM.length - 1] = { role: "ai", text: aiText };
+        return newM;
+      });
+    } catch (err) {
+      setMessages(m => [...m, { role: "ai", text: "Falha na conexão neural." }]);
+    }
   }
 
   return (
@@ -121,9 +154,9 @@ function AIChat({ onClose }: { onClose: () => void }) {
   );
 }
 
-function CompetitionCard({ comp, progressData, extra }: {
-  comp: typeof competitions[0];
-  progressData: { week: string; real: number; meta: number }[];
+function CompetitionCard({ comp, progressData = [], extra }: {
+  comp: any;
+  progressData?: { week: string; real: number; meta: number }[];
   extra?: React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -142,15 +175,15 @@ function CompetitionCard({ comp, progressData, extra }: {
             <Trophy className="text-[#F5B700]" size={18} />
             <span className="text-white font-black">{comp.name}</span>
           </div>
-          <p className="text-gray-400 text-xs">{comp.date.split("-").reverse().join("/")} — {comp.modality}</p>
+          <p className="text-gray-400 text-xs">{new Date(comp.comp_date).toLocaleDateString("pt-BR")} — {comp.modality}</p>
           <div className="flex items-center gap-3 mt-2">
             <div>
               <span className="text-gray-500 text-xs">Meta: </span>
-              <span className="text-[#F5B700] font-black">{comp.goal}kg</span>
+              <span className="text-[#F5B700] font-black">{comp.goal_weight}kg</span>
             </div>
             <div>
               <span className="text-gray-500 text-xs">Atual: </span>
-              <span className="text-white font-bold">{comp.currentEstimate}kg</span>
+              <span className="text-white font-bold">{comp.current_estimate}kg</span>
             </div>
           </div>
         </div>
@@ -162,24 +195,26 @@ function CompetitionCard({ comp, progressData, extra }: {
       {/* Expanded Content */}
       {expanded && (
         <div className="px-4 pb-4 border-t border-[#2A2A2A] pt-4 space-y-3">
-          {/* Progress Chart */}
-          <div>
-            <h4 className="text-[#F5B700] font-bold text-sm mb-2 uppercase tracking-wider">Progressão</h4>
-            <ResponsiveContainer width="100%" height={160}>
-              <LineChart data={progressData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2A" />
-                <XAxis dataKey="week" tick={{ fill: "#B0B0B0", fontSize: 10 }} />
-                <YAxis tick={{ fill: "#B0B0B0", fontSize: 10 }} domain={["auto", "auto"]} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: "#1A1A1A", border: "1px solid #F5B700", borderRadius: 8 }}
-                  labelStyle={{ color: "#F5B700" }}
-                  itemStyle={{ color: "#fff" }}
-                />
-                <Line type="monotone" dataKey="real" stroke="#F5B700" strokeWidth={2.5} dot={{ fill: "#F5B700", r: 3 }} name="Real" />
-                <Line type="monotone" dataKey="meta" stroke="#FF8C00" strokeWidth={2} strokeDasharray="6 3" dot={false} name="Meta" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          {/* Progress Chart - Oculto se não houver dados */}
+          {progressData.length > 0 && (
+            <div>
+              <h4 className="text-[#F5B700] font-bold text-sm mb-2 uppercase tracking-wider">Progressão</h4>
+              <ResponsiveContainer width="100%" height={160}>
+                <LineChart data={progressData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2A" />
+                  <XAxis dataKey="week" tick={{ fill: "#B0B0B0", fontSize: 10 }} />
+                  <YAxis tick={{ fill: "#B0B0B0", fontSize: 10 }} domain={["auto", "auto"]} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "#1A1A1A", border: "1px solid #F5B700", borderRadius: 8 }}
+                    labelStyle={{ color: "#F5B700" }}
+                    itemStyle={{ color: "#fff" }}
+                  />
+                  <Line type="monotone" dataKey="real" stroke="#F5B700" strokeWidth={2.5} dot={{ fill: "#F5B700", r: 3 }} name="Real" />
+                  <Line type="monotone" dataKey="meta" stroke="#FF8C00" strokeWidth={2} strokeDasharray="6 3" dot={false} name="Meta" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           {/* Simulator */}
           <SimulatorCard comp={comp} />
@@ -206,6 +241,28 @@ function CompetitionCard({ comp, progressData, extra }: {
 }
 
 export default function Championships() {
+  const [comps, setComps] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchComps();
+  }, []);
+
+  async function fetchComps() {
+    try {
+      const { data, error } = await supabase
+        .from('competitions')
+        .select('*')
+        .order('comp_date', { ascending: true });
+      if (error) throw error;
+      setComps(data || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="pb-6 space-y-4">
       {/* Header */}
@@ -219,26 +276,20 @@ export default function Championships() {
         <p className="text-gray-400 text-sm">Preparação e estratégia para competições</p>
       </div>
 
-      {/* Arnold Classic */}
-      <CompetitionCard
-        comp={competitions[0]}
-        progressData={arnoldProgressData}
-      />
+      {loading ? (
+        <div className="px-4 text-gray-500 text-sm">Carregando campeonatos...</div>
+      ) : (
+        comps.map(comp => (
+          <CompetitionCard 
+            key={comp.id} 
+            comp={comp} 
+          />
+        ))
+      )}
 
-      {/* Olympia Brasil */}
-      <CompetitionCard
-        comp={competitions[1]}
-        progressData={olympiaProgressData}
-        extra={
-          <div className="bg-[#F5B700]/10 border border-[#F5B700]/30 rounded-xl p-3 flex items-center gap-2">
-            <Crown className="text-[#F5B700]" size={20} />
-            <div>
-              <p className="text-[#F5B700] font-bold text-sm">Busca pelo Tri Mundial</p>
-              <p className="text-gray-400 text-xs">Ritmo atual suficiente para atingir 300kg</p>
-            </div>
-          </div>
-        }
-      />
+      {comps.length === 0 && !loading && (
+        <div className="px-4 text-gray-500 text-sm">Nenhum campeonato agendado.</div>
+      )}
     </div>
   );
 }

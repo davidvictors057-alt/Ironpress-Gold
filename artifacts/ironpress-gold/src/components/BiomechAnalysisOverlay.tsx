@@ -1,12 +1,13 @@
 import { useState, useRef } from "react";
-import { X, AlertTriangle, CheckCircle, Activity, Clock, Info } from "lucide-react";
+import { Activity, X, Info, AlertTriangle, CheckCircle, Clock, Brain } from "lucide-react";
+import { supabase } from "../lib/supabase";
 import { sampleVideoFrames } from "../services/biomech/videoSampler";
 import { computeBenchMetrics } from "../services/biomech/benchMetrics";
 import { buildReport, BiomechReport } from "../services/biomech/reportBuilder";
-import { db } from "../services/db/db";
+import { getCoachIAFeedback, listAvailableModels } from "../services/coachAI/aiCoachService";
 
 interface Props {
-  videoId: number;
+  videoId: string;
   videoTitle: string;
   onClose: () => void;
 }
@@ -15,15 +16,36 @@ export default function BiomechAnalysisOverlay({ videoId, videoTitle, onClose }:
   const [stage, setStage] = useState<"idle" | "loading-model" | "processing" | "done" | "error">("idle");
   const [progress, setProgress] = useState(0);
   const [report, setReport] = useState<BiomechReport | null>(null);
-  const [pastReports, setPastReports] = useState<{ id: number; score: number; createdAt: number }[]>([]);
+  const [aiFeedback, setAiFeedback] = useState("");
+  const [customApiKey, setCustomApiKey] = useState(localStorage.getItem('gemini_api_key') || "");
+  const [customModelId, setCustomModelId] = useState(localStorage.getItem('gemini_model_id') || "gemini-1.5-flash-latest");
+  const [diagnosedModels, setDiagnosedModels] = useState<string[]>([]);
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
+  const [pastReports, setPastReports] = useState<{ id: string; score: number; created_at: string }[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [showHistory, setShowHistory] = useState(false);
+  const [showKeyConfig, setShowKeyConfig] = useState(!customApiKey);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  function saveKey(key: string, model: string) {
+    setCustomApiKey(key);
+    setCustomModelId(model);
+    localStorage.setItem('gemini_api_key', key);
+    localStorage.setItem('gemini_model_id', model);
+    setShowKeyConfig(false);
+  }
+
   async function loadHistory() {
-    const records = await db.analysis.where("videoId").equals(videoId).reverse().sortBy("createdAt");
-    setPastReports(records.map(r => ({ id: r.id!, score: r.score, createdAt: r.createdAt })));
+    const { data, error } = await supabase
+      .from('analyses')
+      .select('id, score, created_at')
+      .eq('video_id', videoId)
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      setPastReports(data.map(r => ({ id: r.id, score: r.score, created_at: r.created_at })));
+    }
     setShowHistory(true);
   }
 
@@ -45,30 +67,44 @@ export default function BiomechAnalysisOverlay({ videoId, videoTitle, onClose }:
 
       const frames = await sampleVideoFrames(
         videoRef.current,
-        (pct) => setProgress(10 + pct * 0.85),
+        (pct) => setProgress(10 + pct * 0.80),
         5
       );
 
-      setProgress(96);
+      setProgress(92);
       const metrics = computeBenchMetrics(frames);
       const result = buildReport(metrics, frames.length);
       setReport(result);
 
-      await db.analysis.add({
-        videoId,
-        title: videoTitle,
-        score: result.score,
-        flags: result.flags,
-        report: result.summary,
-        keyAngles: {
-          leftElbow: result.metrics.avgLeftElbow,
-          rightElbow: result.metrics.avgRightElbow,
-          symmetry: result.metrics.symmetry,
-          pauseDetected: result.metrics.pauseDetected,
-        },
-        framesAnalyzed: frames.length,
-        createdAt: Date.now(),
-      });
+      setProgress(95);
+      // Chamada real da IA (Gemini stable)
+      let aiResponseText = "";
+      try {
+        aiResponseText = await getCoachIAFeedback(metrics, videoTitle, "EQUIPADO F8", customApiKey, customModelId);
+      } catch (aiErr) {
+        console.error("AI Error ignored for metrics display:", aiErr);
+        aiResponseText = "⚠️ Não foi possível gerar o feedback da IA agora. As métricas técnicas estão disponíveis abaixo.";
+      }
+      setAiFeedback(aiResponseText);
+
+      const { error: dbError } = await supabase
+        .from('analyses')
+        .insert({
+          video_id: videoId,
+          title: videoTitle,
+          score: result.score,
+          flags: result.flags,
+          report_summary: aiResponseText || result.summary,
+          key_angles: {
+            leftElbow: result.metrics.avgLeftElbow,
+            rightElbow: result.metrics.avgRightElbow,
+            symmetry: result.metrics.symmetry,
+            pauseDetected: result.metrics.pauseDetected,
+          },
+          frames_analyzed: frames.length,
+        });
+
+      if (dbError) throw dbError;
 
       setProgress(100);
       setStage("done");
@@ -114,7 +150,81 @@ export default function BiomechAnalysisOverlay({ videoId, videoTitle, onClose }:
         </div>
 
         {stage === "idle" && (
-          <div className="space-y-3">
+          <div className="space-y-4">
+            {/* Key Config */}
+            {showKeyConfig ? (
+              <div className="bg-[#1A1A1A] border border-[#F5B700]/30 rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2 text-[#F5B700] mb-1">
+                  <Brain size={18} />
+                  <span className="font-bold text-xs uppercase tracking-wider">Configurar IA Gemini</span>
+                </div>
+                <p className="text-gray-400 text-[10px]">Para feedback real, insira sua chave do Google AI Studio:</p>
+                <input
+                  type="password"
+                  placeholder="Colar chave secreta aqui..."
+                  className="w-full bg-black border border-[#2A2A2A] rounded-lg px-3 py-2 text-white text-xs"
+                  defaultValue={customApiKey}
+                  onChange={(e) => setCustomApiKey(e.target.value)}
+                />
+                <input
+                  type="text"
+                  placeholder="Modelo (ex: gemini-1.5-flash)"
+                  className="w-full bg-black border border-[#2A2A2A] rounded-lg px-3 py-2 text-white text-xs"
+                  defaultValue={customModelId}
+                  onChange={(e) => setCustomModelId(e.target.value)}
+                />
+                <button
+                  className="btn-gold w-full py-2 text-xs font-bold"
+                  onClick={() => saveKey(customApiKey, customModelId)}
+                >
+                  Salvar Configuração
+                </button>
+
+                <div className="mt-4 pt-4 border-t border-[#2A2A2A]">
+                  <p className="text-[10px] text-gray-400 mb-2 italic">Dúvida no modelo? O diagnóstico lista o que está ativo na sua chave:</p>
+                  <button
+                    className="w-full bg-[#1A1A1A] hover:bg-[#252525] text-gray-300 py-1.5 rounded text-[10px] border border-[#333] transition-colors"
+                    onClick={async () => {
+                      setIsDiagnosing(true);
+                      const models = await listAvailableModels(customApiKey);
+                      setDiagnosedModels(models);
+                      setIsDiagnosing(false);
+                    }}
+                    disabled={isDiagnosing}
+                  >
+                    {isDiagnosing ? "Consultando Google..." : "🔍 Listar Modelos Disponíveis"}
+                  </button>
+                  
+                  {diagnosedModels.length > 0 && (
+                    <div className="mt-2 bg-black/50 p-2 rounded border border-[#222] max-h-32 overflow-y-auto">
+                      <p className="text-[9px] text-gold font-bold mb-1 uppercase tracking-tighter">Modelos Encontrados:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {diagnosedModels.map(m => (
+                          <button
+                            key={m}
+                            className="text-[9px] bg-[#2A2A2A] hover:bg-gold hover:text-black px-1.5 py-0.5 rounded transition-all cursor-pointer"
+                            onClick={() => setCustomModelId(m)}
+                            title="Clique para selecionar"
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex justify-center">
+                <button
+                  onClick={() => setShowKeyConfig(true)}
+                  className="text-[#F5B700] text-[10px] underline opacity-60 hover:opacity-100"
+                >
+                  Trocar Chave de API IA
+                </button>
+              </div>
+            )}
+
             <p className="text-white text-sm text-center">Selecione o vídeo do dispositivo para analisar</p>
             <button
               className="btn-gold w-full py-4 flex items-center justify-center gap-2 font-black text-sm"
@@ -171,14 +281,27 @@ export default function BiomechAnalysisOverlay({ videoId, videoTitle, onClose }:
 
         {stage === "done" && report && (
           <div className="space-y-4">
+            {/* AI Coach Feedback */}
+            <div className="card-dark border-2 border-[#F5B700]/30 p-4 relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-2 opacity-10">
+                <Brain size={60} className="text-[#F5B700]" />
+              </div>
+              <h4 className="text-[#F5B700] font-black text-xs uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
+                <Brain size={16} /> Treinador IA Ironside
+              </h4>
+              <p className="text-gray-100 text-sm leading-relaxed italic">
+                "{aiFeedback || report.summary}"
+              </p>
+            </div>
+
             {/* Score */}
             <div className="card-dark border border-[#2A2A2A] p-4 text-center">
-              <p className="text-gray-400 text-xs uppercase tracking-wider mb-2">Score de Execução</p>
+              <p className="text-gray-400 text-xs uppercase tracking-wider mb-2">Score Técnico</p>
               <div
-                className="w-24 h-24 rounded-full border-4 flex items-center justify-center mx-auto"
+                className="w-20 h-20 rounded-full border-4 flex items-center justify-center mx-auto"
                 style={{ borderColor: scoreColor, background: `${scoreColor}15` }}
               >
-                <span className="font-black text-3xl" style={{ color: scoreColor }}>{report.score}</span>
+                <span className="font-black text-2xl" style={{ color: scoreColor }}>{report.score}</span>
               </div>
               <p className="text-gray-300 text-xs mt-2">de 100 pontos</p>
               <p className="text-gray-200 text-sm mt-3">{report.summary}</p>
@@ -271,7 +394,7 @@ export default function BiomechAnalysisOverlay({ videoId, videoTitle, onClose }:
               pastReports.map(r => (
                 <div key={r.id} className="bg-[#0A0A0A] rounded-xl p-3 mb-2 flex items-center justify-between border border-[#2A2A2A]">
                   <div>
-                    <p className="text-gray-300 text-xs">{new Date(r.createdAt).toLocaleDateString("pt-BR")}</p>
+                    <p className="text-gray-300 text-xs">{new Date(r.created_at).toLocaleDateString("pt-BR")}</p>
                   </div>
                   <div
                     className="w-12 h-12 rounded-full border-2 flex items-center justify-center"

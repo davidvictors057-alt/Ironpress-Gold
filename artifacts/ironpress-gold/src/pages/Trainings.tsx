@@ -1,53 +1,24 @@
-import { useState } from "react";
-import { Brain, TrendingUp, Plus, Edit2, Trash2, X } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Brain, TrendingUp, Plus, Edit2, Trash2, X, ChevronRight, MessageSquare } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend
 } from "recharts";
-import { runRuleEngine } from "../services/coachAI/ruleEngine";
+import { getGeneralTrainingFeedback } from "../services/coachAI/aiCoachService";
+import { supabase } from "../lib/supabase";
 
 const RAW_KEY = "ironside_trainings_raw";
 const EQ_KEY = "ironside_trainings_equipped";
 
 export interface TrainingRecord {
-  id: number;
+  id: string;
   date: string;
   target: number;
   actual: number;
   rpe: number;
-  modality: "raw" | "equipped";
+  modality: "soft" | "raw" | "f8";
 }
 
-const DEFAULT_RAW: TrainingRecord[] = [
-  { id: 1, date: "26/03/2025", target: 185, actual: 185, rpe: 8, modality: "raw" },
-  { id: 2, date: "28/03/2025", target: 187, actual: 186, rpe: 8.5, modality: "raw" },
-  { id: 3, date: "30/03/2025", target: 185, actual: 185, rpe: 7.5, modality: "raw" },
-  { id: 4, date: "01/04/2025", target: 188, actual: 187, rpe: 8, modality: "raw" },
-  { id: 5, date: "02/04/2025", target: 190, actual: 190, rpe: 9, modality: "raw" },
-  { id: 6, date: "03/04/2025", target: 185, actual: 183, rpe: 8, modality: "raw" },
-  { id: 7, date: "04/04/2025", target: 187, actual: 187, rpe: 8, modality: "raw" },
-];
-
-const DEFAULT_EQ: TrainingRecord[] = [
-  { id: 1, date: "25/03/2025", target: 270, actual: 270, rpe: 8, modality: "equipped" },
-  { id: 2, date: "27/03/2025", target: 275, actual: 274, rpe: 8.5, modality: "equipped" },
-  { id: 3, date: "29/03/2025", target: 270, actual: 268, rpe: 8, modality: "equipped" },
-  { id: 4, date: "31/03/2025", target: 278, actual: 278, rpe: 9, modality: "equipped" },
-  { id: 5, date: "02/04/2025", target: 280, actual: 280, rpe: 9.5, modality: "equipped" },
-  { id: 6, date: "03/04/2025", target: 275, actual: 272, rpe: 8, modality: "equipped" },
-  { id: 7, date: "04/04/2025", target: 278, actual: 277, rpe: 8.5, modality: "equipped" },
-];
-
-function loadTrainings(mode: "raw" | "equipped"): TrainingRecord[] {
-  try {
-    const key = mode === "raw" ? RAW_KEY : EQ_KEY;
-    const stored = localStorage.getItem(key);
-    return stored ? JSON.parse(stored) : (mode === "raw" ? DEFAULT_RAW : DEFAULT_EQ);
-  } catch { return mode === "raw" ? DEFAULT_RAW : DEFAULT_EQ; }
-}
-
-function saveTrainings(mode: "raw" | "equipped", trainings: TrainingRecord[]) {
-  localStorage.setItem(mode === "raw" ? RAW_KEY : EQ_KEY, JSON.stringify(trainings));
-}
+// Removida lógica de localStorage para usar Supabase
 
 function getBarColor(pct: number) {
   if (pct >= 99) return "#F5B700";
@@ -63,8 +34,8 @@ function getBarLabel(pct: number) {
 
 interface TrainingFormProps {
   initial?: Partial<TrainingRecord>;
-  mode: "raw" | "equipped";
-  onSave: (t: TrainingRecord) => void;
+  mode: "raw" | "f8" | "soft";
+  onSave: (t: any) => void;
   onClose: () => void;
 }
 
@@ -77,12 +48,11 @@ function TrainingFormModal({ initial, mode, onSave, onClose }: TrainingFormProps
   function handle() {
     if (!date.trim() || !target || !actual) return;
     onSave({
-      id: initial?.id ?? Date.now(),
-      date: date.trim(),
-      target: parseFloat(target),
-      actual: parseFloat(actual),
+      workout_date: date.trim().split('/').reverse().join('-'), // Converte DD/MM/AAAA para YYYY-MM-DD
+      target_weight: parseFloat(target),
+      actual_weight: parseFloat(actual),
       rpe: parseFloat(rpe),
-      modality: mode,
+      modality: mode.toUpperCase(),
     });
     onClose();
   }
@@ -115,25 +85,75 @@ function TrainingFormModal({ initial, mode, onSave, onClose }: TrainingFormProps
 }
 
 export default function Trainings() {
-  const [mode, setMode] = useState<"raw" | "equipped">("equipped");
-  const [trainings, setTrainings] = useState<TrainingRecord[]>(() => loadTrainings("equipped"));
-  const [rawTrainings, setRawTrainings] = useState<TrainingRecord[]>(() => loadTrainings("raw"));
+  const [mode, setMode] = useState<"raw" | "f8" | "soft">("f8");
+  const [trainings, setTrainings] = useState<TrainingRecord[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editRow, setEditRow] = useState<TrainingRecord | null>(null);
   const [showAIModal, setShowAIModal] = useState(false);
   const [aiResponse, setAiResponse] = useState("");
   const [aiQuery, setAiQuery] = useState("");
 
-  const active = mode === "equipped" ? trainings : rawTrainings;
+  useEffect(() => {
+    fetchTrainings();
+  }, []);
 
-  function setActive(updated: TrainingRecord[]) {
-    if (mode === "equipped") { setTrainings(updated); saveTrainings("equipped", updated); }
-    else { setRawTrainings(updated); saveTrainings("raw", updated); }
+  async function fetchTrainings() {
+    try {
+      const { data, error } = await supabase
+        .from('workouts')
+        .select('*')
+        .order('workout_date', { ascending: false });
+
+      if (error) throw error;
+
+      setTrainings(data.map(w => ({
+        id: w.id,
+        date: new Date(w.workout_date).toLocaleDateString("pt-BR"),
+        target: w.target_weight,
+        actual: w.actual_weight,
+        rpe: w.rpe,
+        modality: w.modality.toLowerCase()
+      })));
+    } catch (error) {
+      console.error("Erro ao carregar treinos:", error);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function addTraining(t: TrainingRecord) { setActive([...active, t]); }
-  function updateTraining(t: TrainingRecord) { setActive(active.map(x => x.id === t.id ? t : x)); }
-  function deleteTraining(id: number) { setActive(active.filter(x => x.id !== id)); }
+  async function addTraining(t: any) {
+    try {
+      const { error } = await supabase.from('workouts').insert(t);
+      if (error) throw error;
+      fetchTrainings();
+    } catch (error: any) {
+      alert("Erro ao salvar treino: " + error.message);
+    }
+  }
+
+  async function updateTraining(t: any) {
+    try {
+      const { error } = await supabase.from('workouts').update(t).eq('id', editRow?.id);
+      if (error) throw error;
+      fetchTrainings();
+    } catch (error: any) {
+      alert("Erro ao atualizar treino: " + error.message);
+    }
+  }
+
+  async function deleteTraining(id: string) {
+    if (!confirm("Excluir este treino?")) return;
+    try {
+      const { error } = await supabase.from('workouts').delete().eq('id', id);
+      if (error) throw error;
+      fetchTrainings();
+    } catch (error: any) {
+      alert("Erro ao deletar treino: " + error.message);
+    }
+  }
+
+  const active = trainings.filter(t => t.modality === mode);
 
   const pcts = active.map(t => Math.round((t.actual / t.target) * 100));
   const highPct = pcts.filter(p => p >= 99).length;
@@ -145,9 +165,18 @@ export default function Trainings() {
     pct: Math.round((t.actual / t.target) * 100),
   }));
 
-  function askAI() {
-    const resp = runRuleEngine(aiQuery || "como estou");
-    setAiResponse(resp);
+  async function askAI() {
+    if (!aiQuery.trim()) return;
+    setAiResponse("Analisando biomecânica analítica...");
+    try {
+      const storedKey = localStorage.getItem('gemini_api_key') || "";
+      const storedModel = localStorage.getItem('gemini_model_id') || "gemini-1.5-flash";
+      const resp = await getGeneralTrainingFeedback(active, aiQuery, mode.toUpperCase(), storedKey, storedModel);
+      setAiResponse(resp);
+      setAiQuery("");
+    } catch (err) {
+      setAiResponse("Falha ao consultar rede neural.");
+    }
   }
 
   return (
@@ -172,8 +201,8 @@ export default function Trainings() {
       {/* Mode Selector — F8 primeiro */}
       <div className="mx-4 flex bg-[#1A1A1A] rounded-xl p-1 border border-[#2A2A2A]" data-testid="selector-mode">
         <button
-          className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${mode === "equipped" ? "btn-gold" : "text-gray-400"}`}
-          onClick={() => setMode("equipped")}
+          className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${mode === "f8" ? "btn-gold" : "text-gray-400"}`}
+          onClick={() => setMode("f8")}
           data-testid="button-mode-equipped"
         >
           EQUIPADO F8
@@ -215,7 +244,7 @@ export default function Trainings() {
             <div>
               <p className="text-[#F5B700] font-bold text-sm">Insight do Coach IA</p>
               <p className="text-gray-200 text-sm mt-1">
-                {mode === "equipped"
+                {mode === "f8"
                   ? `Você atingiu 99%+ em ${highPct} dos ${active.length} últimos treinos F8. Consistência de bicampeão!`
                   : `Seus treinos RAW mostram evolução contínua para a meta de 210kg.`}
               </p>
@@ -227,7 +256,7 @@ export default function Trainings() {
       {/* Table */}
       <div className="mx-4">
         <h3 className="text-[#F5B700] font-bold text-sm uppercase tracking-wider mb-2">
-          Treinos — {mode === "equipped" ? "Equipado F8" : "RAW"}
+          Treinos — {mode === "f8" ? "Equipado F8" : "RAW"}
         </h3>
         <div className="card-dark border border-[#2A2A2A] overflow-hidden" data-testid="table-trainings">
           <table className="w-full text-xs">
@@ -270,9 +299,9 @@ export default function Trainings() {
 
       {/* AI Button */}
       <div className="mx-4">
-        <button className="btn-gold-outline w-full py-3 flex items-center justify-center gap-2 font-semibold" data-testid="button-ask-ai" onClick={() => setShowAIModal(true)}>
+        <button className="btn-gold-outline w-full py-3 flex items-center justify-center gap-2 font-semibold uppercase tracking-tighter" data-testid="button-ask-ai" onClick={() => setShowAIModal(true)}>
           <Brain size={18} className="text-[#F5B700]" />
-          Perguntar ao Coach IA Ironside
+          Perguntar ao Coach IA de Biomecânica Analítica
         </button>
       </div>
 
@@ -286,10 +315,15 @@ export default function Trainings() {
           <div className="w-full bg-[#1A1A1A] rounded-t-3xl p-5 border-t border-[#F5B700]/30" onClick={e => e.stopPropagation()}>
             <div className="w-10 h-1 bg-[#2A2A2A] rounded-full mx-auto mb-4" />
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[#F5B700] font-black text-lg">Coach IA Ironside</h3>
+              <div className="flex items-center gap-2">
+                <Brain size={20} className="text-gold" />
+                <h3 className="text-[#F5B700] font-black text-lg uppercase tracking-tight">Coach IA de Biomecânica Analítica</h3>
+              </div>
               <button onClick={() => setShowAIModal(false)}><X size={20} className="text-gray-400" /></button>
             </div>
-            <p className="text-gray-500 text-xs mb-3">Motor de regras local — futuramente substituído por Gemini API</p>
+            <p className="text-gray-500 text-xs mb-3 flex items-center gap-1">
+              <MessageSquare size={10} /> Conectado via Gemini Neural Network
+            </p>
             {aiResponse && (
               <div className="bg-[#0A0A0A] rounded-xl p-4 border border-[#F5B700]/20 mb-3">
                 <p className="text-gray-200 text-sm leading-relaxed">{aiResponse}</p>

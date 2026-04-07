@@ -31,10 +31,24 @@ export async function sampleVideoFrames(
   let frameIdx = 0;
 
   return new Promise((resolve, reject) => {
+    let resolved = false;
+
+    const finalize = () => {
+      if (resolved) return;
+      resolved = true;
+      onProgress(100);
+      videoElement.pause();
+      videoElement.removeEventListener("ended", finalize);
+      resolve(results);
+    };
+
+    videoElement.addEventListener("ended", finalize);
     videoElement.currentTime = 0;
     videoElement.play().catch(reject);
 
     const processFrame = async (now: number, metadata: { mediaTime: number }) => {
+      if (resolved) return;
+
       const currentPct = (metadata.mediaTime / duration) * 100;
       onProgress(Math.min(currentPct, 99));
 
@@ -65,9 +79,7 @@ export async function sampleVideoFrames(
       if (!videoElement.ended && !videoElement.paused) {
         (videoElement as any).requestVideoFrameCallback(processFrame);
       } else {
-        onProgress(100);
-        videoElement.pause();
-        resolve(results);
+        finalize();
       }
     };
 

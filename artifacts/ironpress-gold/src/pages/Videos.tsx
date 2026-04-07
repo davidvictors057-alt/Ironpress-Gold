@@ -1,33 +1,18 @@
-import { useState } from "react";
-import { Play, Crown, Share2, X, MessageSquare, Activity, Plus, Trash2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Play, Crown, Share2, X, MessageSquare, Activity, Plus, Trash2, Upload } from "lucide-react";
 import BiomechAnalysisOverlay from "../components/BiomechAnalysisOverlay";
+import { supabase } from "../lib/supabase";
 
 interface VideoRecord {
-  id: number;
+  id: string;
   title: string;
   date: string;
   modality: string;
   isRecord: boolean;
+  storage_path?: string;
 }
 
-const DEFAULT_VIDEOS: VideoRecord[] = [
-  { id: 1, title: "Supino RAW - 190kg (recorde)", date: "01/04/2025", modality: "RAW", isRecord: true },
-  { id: 2, title: "Supino Equipado F8 - 280kg (recorde brasileiro)", date: "28/03/2025", modality: "EQUIPADO F8", isRecord: true },
-  { id: 3, title: "Treino Técnico - Pegada e Setup", date: "25/03/2025", modality: "RAW", isRecord: false },
-  { id: 4, title: "Preparação F8 - 275kg", date: "20/03/2025", modality: "EQUIPADO F8", isRecord: false },
-];
-
-function loadVideos(): VideoRecord[] {
-  try {
-    return JSON.parse(localStorage.getItem("ironside_videos") || JSON.stringify(DEFAULT_VIDEOS));
-  } catch {
-    return DEFAULT_VIDEOS;
-  }
-}
-
-function saveVideos(videos: VideoRecord[]) {
-  localStorage.setItem("ironside_videos", JSON.stringify(videos));
-}
+// Removido o uso de DEFAULT_VIDEOS e saves locais para focar no Supabase
 
 function generateCode() {
   const codes = ["IRON123", "IRON456", "SIDE789", "GOLD001", "PRESS42"];
@@ -119,23 +104,43 @@ function VideoModal({
   );
 }
 
-function AddVideoModal({ onAdd, onClose }: { onAdd: (v: VideoRecord) => void; onClose: () => void }) {
+function AddVideoModal({ onAdd, onClose }: { onAdd: () => void; onClose: () => void }) {
   const [title, setTitle] = useState("");
-  const [date, setDate] = useState("");
   const [modality, setModality] = useState("EQUIPADO F8");
   const [isRecord, setIsRecord] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
 
-  function handleAdd() {
-    if (!title.trim() || !date.trim()) return;
-    const newVideo: VideoRecord = {
-      id: Date.now(),
-      title: title.trim(),
-      date,
-      modality,
-      isRecord,
-    };
-    onAdd(newVideo);
-    onClose();
+  async function handleAdd() {
+    if (!title.trim() || !file) return;
+    setUploading(true);
+    
+    try {
+      const fileName = `${Date.now()}-${file.name}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('videos')
+        .upload(fileName, file);
+
+      if (uploadError) throw uploadError;
+
+      const { error: dbError } = await supabase
+        .from('videos')
+        .insert({
+          title: title.trim(),
+          modality,
+          is_record: isRecord,
+          storage_path: uploadData.path,
+        });
+
+      if (dbError) throw dbError;
+
+      onAdd();
+      onClose();
+    } catch (error: any) {
+      alert("Erro no upload: " + error.message);
+    } finally {
+      setUploading(false);
+    }
   }
 
   return (
@@ -148,7 +153,24 @@ function AddVideoModal({ onAdd, onClose }: { onAdd: (v: VideoRecord) => void; on
         <h3 className="text-[#F5B700] font-black text-lg mb-4">Novo Vídeo</h3>
         <div className="space-y-3">
           <input className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" placeholder="Título" value={title} onChange={e => setTitle(e.target.value)} />
-          <input type="text" className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" placeholder="Data (DD/MM/AAAA)" value={date} onChange={e => setDate(e.target.value)} />
+          
+          <div className="relative">
+            <input 
+              type="file" 
+              accept="video/*" 
+              className="hidden" 
+              id="video-upload" 
+              onChange={e => setFile(e.target.files?.[0] || null)} 
+            />
+            <label 
+              htmlFor="video-upload" 
+              className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-gray-400 text-sm flex items-center gap-2 cursor-pointer hover:border-[#F5B700]"
+            >
+              <Upload size={16} />
+              {file ? file.name : "Selecionar Vídeo"}
+            </label>
+          </div>
+
           <select className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" value={modality} onChange={e => setModality(e.target.value)}>
             <option value="EQUIPADO F8">EQUIPADO F8</option>
             <option value="RAW">RAW</option>
@@ -157,7 +179,13 @@ function AddVideoModal({ onAdd, onClose }: { onAdd: (v: VideoRecord) => void; on
             <input type="checkbox" checked={isRecord} onChange={e => setIsRecord(e.target.checked)} className="accent-[#F5B700]" />
             <span className="text-gray-300 text-sm">É um recorde</span>
           </label>
-          <button className="btn-gold w-full py-3 font-black text-sm" onClick={handleAdd}>Adicionar Vídeo</button>
+          <button 
+            className="btn-gold w-full py-3 font-black text-sm disabled:opacity-50" 
+            onClick={handleAdd}
+            disabled={uploading}
+          >
+            {uploading ? "Fazendo Upload..." : "Adicionar Vídeo"}
+          </button>
         </div>
       </div>
     </div>
@@ -165,21 +193,63 @@ function AddVideoModal({ onAdd, onClose }: { onAdd: (v: VideoRecord) => void; on
 }
 
 export default function Videos() {
-  const [videos, setVideos] = useState<VideoRecord[]>(loadVideos);
+  const [videos, setVideos] = useState<VideoRecord[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<VideoRecord | null>(null);
   const [analyzeVideo, setAnalyzeVideo] = useState<VideoRecord | null>(null);
   const [showAddVideo, setShowAddVideo] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  function handleAddVideo(v: VideoRecord) {
-    const updated = [...videos, v];
-    setVideos(updated);
-    saveVideos(updated);
+  useEffect(() => {
+    fetchVideos();
+  }, []);
+
+  const handleAddVideo = () => {
+    fetchVideos();
+  };
+
+  async function fetchVideos() {
+    try {
+      const { data, error } = await supabase
+        .from('videos')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      setVideos(data.map(v => ({
+        id: v.id,
+        title: v.title,
+        date: new Date(v.created_at).toLocaleDateString("pt-BR"),
+        modality: v.modality,
+        isRecord: v.is_record,
+        storage_path: v.storage_path
+      })));
+    } catch (error) {
+      console.error("Erro ao carregar vídeos:", error);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function handleDeleteVideo(id: number) {
-    const updated = videos.filter(v => v.id !== id);
-    setVideos(updated);
-    saveVideos(updated);
+  async function handleDeleteVideo(id: string) {
+    if (!confirm("Tem certeza que deseja excluir este vídeo?")) return;
+    
+    try {
+      const videoToDelete = videos.find(v => v.id === id);
+      if (videoToDelete?.storage_path) {
+        await supabase.storage.from('videos').remove([videoToDelete.storage_path]);
+      }
+      
+      const { error } = await supabase
+        .from('videos')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      setVideos(prev => prev.filter(v => v.id !== id));
+    } catch (error) {
+      alert("Erro ao excluir vídeo.");
+    }
   }
 
   return (

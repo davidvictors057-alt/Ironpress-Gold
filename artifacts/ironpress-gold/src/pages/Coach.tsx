@@ -1,21 +1,67 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Users, Key, Eye, LogOut, AlertCircle, Play } from "lucide-react";
-import { videos, coachLog } from "../mockData";
+import { supabase } from "../lib/supabase";
 
 const COACH_CODE = "123456";
 const ATHLETE_CODE = "IRONSIDE2025";
 
 function VideoListCoach() {
-  const [selected, setSelected] = useState<typeof videos[0] | null>(null);
+  const [videos, setVideos] = useState<any[]>([]);
+  const [selected, setSelected] = useState<any | null>(null);
   const [comment, setComment] = useState("");
-  const [comments, setComments] = useState<Record<number, string>>({});
+  const [comments, setComments] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
 
-  function saveComment(id: number) {
-    if (!comment.trim()) return;
-    setComments(prev => ({ ...prev, [id]: comment }));
-    localStorage.setItem(`coach_comment_${id}`, comment);
-    setComment("");
+  useEffect(() => {
+    fetchVideos();
+  }, []);
+
+  async function fetchVideos() {
+    try {
+      const { data, error } = await supabase
+        .from('videos')
+        .select(`
+          *,
+          coach_comments (
+            content
+          )
+        `)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      setVideos(data || []);
+      
+      const commentsMap: Record<string, string> = {};
+      data?.forEach(v => {
+        if (v.coach_comments && v.coach_comments.length > 0) {
+          commentsMap[v.id] = v.coach_comments[0].content;
+        }
+      });
+      setComments(commentsMap);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
   }
+
+  async function saveComment(videoId: string) {
+    if (!comment.trim()) return;
+    try {
+      const { error } = await supabase.from('coach_comments').upsert({
+        video_id: videoId,
+        content: comment
+      });
+      if (error) throw error;
+      setComments(prev => ({ ...prev, [videoId]: comment }));
+      setComment("");
+    } catch (e: any) {
+      alert("Erro ao salvar comentário: " + e.message);
+    }
+  }
+
+  if (loading) return <div className="text-center py-10 text-gray-400">Carregando vídeos...</div>;
+  if (videos.length === 0) return <div className="text-center py-10 text-gray-400">Nenhum vídeo disponível.</div>;
 
   return (
     <div className="space-y-3">
@@ -85,15 +131,44 @@ export default function Coach() {
   const [codeError, setCodeError] = useState(false);
   const [accessCode, setAccessCode] = useState<string | null>(null);
   const [codeTimer] = useState("7 dias");
+  const [coachLog, setCoachLog] = useState<any[]>([]);
 
-  function generateCode() {
-    setAccessCode(ATHLETE_CODE);
+  useEffect(() => {
+    fetchCoachLog();
+  }, []);
+
+  async function fetchCoachLog() {
+    try {
+      const { data, error } = await supabase
+        .from('coach_access')
+        .select('*')
+        .order('accessed_at', { ascending: false });
+      if (error) throw error;
+      setCoachLog(data || []);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
-  function enterCoachMode() {
+  async function generateCode() {
+    setAccessCode(ATHLETE_CODE);
+    // TODO: Registrar geração de código no Supabase se necessário
+  }
+
+  async function enterCoachMode() {
     if (code === COACH_CODE) {
       setCoachMode(true);
       setCodeError(false);
+      // Registrar acesso
+      try {
+        await supabase.from('coach_access').insert({
+          coach_name: "Treinador Demo",
+          action: "Acessou galeria de vídeos"
+        });
+        fetchCoachLog();
+      } catch (e) {
+        console.error(e);
+      }
     } else {
       setCodeError(true);
     }
@@ -147,8 +222,8 @@ export default function Coach() {
               {coachLog.map(log => (
                 <div key={log.id} className="bg-[#0A0A0A] rounded-lg p-3 border border-[#2A2A2A]" data-testid={`log-entry-${log.id}`}>
                   <div className="flex justify-between items-start">
-                    <p className="text-gray-200 text-sm">{log.coach}</p>
-                    <p className="text-gray-500 text-xs">{log.date}</p>
+                    <p className="text-gray-200 text-sm">{log.coach_name}</p>
+                    <p className="text-gray-500 text-xs">{new Date(log.accessed_at).toLocaleDateString()}</p>
                   </div>
                   <p className="text-gray-400 text-xs mt-0.5">{log.action}</p>
                 </div>
