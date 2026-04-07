@@ -154,8 +154,7 @@ export default function Health() {
         shoulder: health.shoulder,
         elbow: health.elbow,
         wrist: health.wrist,
-        fatigue: health.fatigue,
-        created_at: new Date().toISOString()
+        fatigue: health.fatigue
       });
       if (error) throw error;
       setSaved(true);
@@ -260,7 +259,7 @@ export default function Health() {
   async function deleteSupp(id: string | number) {
     if (!confirm("Excluir suplemento?")) return;
     try {
-      const { error } = await supabase.from('supplements').delete().filter('id', 'eq', id);
+      const { error } = await supabase.from('supplements').delete().eq('id', id);
       if (error) throw error;
       await fetchSupplements();
     } catch (e: any) {
