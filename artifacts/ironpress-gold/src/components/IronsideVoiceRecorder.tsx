@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Trash2, Send, Play, Pause, Waves } from 'lucide-react';
+import { Mic, Square, Trash2, Send, Play, Pause, Waves, AlertTriangle } from 'lucide-react';
 
 export interface AudioPayload {
   text: string;
@@ -17,6 +17,7 @@ export const IronsideVoiceRecorder: React.FC<IronsideVoiceRecorderProps> = ({ on
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -31,13 +32,30 @@ export const IronsideVoiceRecorder: React.FC<IronsideVoiceRecorderProps> = ({ on
     };
   }, []);
 
+  const getSupportedMimeType = () => {
+    const types = ['audio/webm', 'audio/mp4', 'audio/aac', 'audio/wav'];
+    for (const type of types) {
+      if (MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return '';
+  };
+
   const startRecording = async () => {
+    setErrorMessage(null);
+    
+    if (!window.isSecureContext) {
+      setErrorMessage("Microfone bloqueado: O navegador exige uma conexão segura (HTTPS) para gravar áudio.");
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      const mimeType = getSupportedMimeType();
+      
+      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mediaRecorder;
       
-      const audioContext = new AudioContext();
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
@@ -45,9 +63,12 @@ export const IronsideVoiceRecorder: React.FC<IronsideVoiceRecorderProps> = ({ on
       analyserRef.current = analyser;
 
       const chunks: BlobPart[] = [];
-      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const blob = new Blob(chunks, { type: mimeType || 'audio/wav' });
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
       };
@@ -56,13 +77,21 @@ export const IronsideVoiceRecorder: React.FC<IronsideVoiceRecorderProps> = ({ on
       setIsRecording(true);
       setRecordingTime(0);
       
+      if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(() => {
         setRecordingTime((prev) => prev + 1);
       }, 1000);
 
       drawVisualizer();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Mic Error:", err);
+      if (err.name === 'NotAllowedError') {
+        setErrorMessage("Permissão negada: O acesso ao microfone foi recusado ou bloqueado nas configurações do site.");
+      } else if (err.name === 'NotFoundError') {
+        setErrorMessage("Microfone não encontrado: Verifique se o dispositivo está conectado.");
+      } else {
+        setErrorMessage("Erro de áudio: Não foi possível iniciar a gravação cinemática.");
+      }
     }
   };
 
@@ -143,6 +172,20 @@ export const IronsideVoiceRecorder: React.FC<IronsideVoiceRecorderProps> = ({ on
           <div className="flex items-center justify-between w-full px-2">
             <span className="text-[10px] font-black text-amber-500 uppercase">Gravação Elite</span>
             <span className="text-[10px] font-mono text-white">{Math.floor(recordingTime/60)}:{ (recordingTime%60).toString().padStart(2, '0')}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Mensagem de Erro / Aviso de Segurança */}
+      {errorMessage && (
+        <div className="absolute bottom-full mb-4 left-0 w-64 bg-red-900/90 border border-red-500/50 rounded-xl p-3 shadow-2xl z-50 animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="text-red-400 flex-shrink-0 mt-0.5" size={14} />
+            <div className="flex-1">
+              <p className="text-[10px] font-black text-white uppercase tracking-wider mb-1">Erro de Entrada</p>
+              <p className="text-[10px] text-red-200 leading-tight">{errorMessage}</p>
+            </div>
+            <button onClick={() => setErrorMessage(null)} className="text-white/50 hover:text-white uppercase text-[8px] font-black">Fechar</button>
           </div>
         </div>
       )}
