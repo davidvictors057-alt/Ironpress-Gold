@@ -7,14 +7,13 @@ RUN npm install -g pnpm
 WORKDIR /app
 
 # Copiar arquivos de configuração do Monorepo (Raiz)
-# Estes arquivos são necessários para resolver os "catalogs" e dependências locais
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY artifacts/ironpress-gold ./artifacts/ironpress-gold
 COPY lib ./lib
 COPY attached_assets ./attached_assets
 
-# Instalar dependências focando no app ironpress-gold e suas libs locais (@workspace)
-RUN pnpm install --frozen-lockfile --filter ironpress-gold...
+# Instalar TODAS as dependências da raiz para evitar erros de filtro/referência
+RUN pnpm install --frozen-lockfile
 
 # Realizar o build do app
 WORKDIR /app/artifacts/ironpress-gold
@@ -28,19 +27,17 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Copiar apenas os arquivos necessários para execução
-# Nota: O vite.config.ts gera em dist/public, normalizamos para /app/dist conforme server.js
-COPY --from=builder /app/artifacts/ironpress-gold/dist/public ./dist
-COPY --from=builder /app/artifacts/ironpress-gold/package.json ./
-COPY --from=builder /app/artifacts/ironpress-gold/server.js ./
+# Instalar APENAS as dependências do servidor (ignorando o package.json do frontend para evitar erro de npm com "catalog:")
+RUN npm install express cors dotenv node-fetch
 
-# Instalar pnpm no runner para garantir resolução limpa de produção
-RUN npm install -g pnpm && \
-    pnpm install --prod --no-frozen-lockfile
+# Copiar o bundle do frontend e o arquivo do servidor
+COPY --from=builder /app/artifacts/ironpress-gold/dist/public ./dist
+COPY --from=builder /app/artifacts/ironpress-gold/server.js ./
 
 # Cloud Run exige porta dinâmica via porta 8080 padrão
 EXPOSE 8080
 
 # Comando de Inicialização do Bunker
 CMD ["node", "server.js"]
+
 
