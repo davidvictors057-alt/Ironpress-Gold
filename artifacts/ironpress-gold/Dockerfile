@@ -27,8 +27,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Instalar APENAS as dependências do servidor (ignorando o package.json do frontend para evitar erro de npm com "catalog:")
-RUN npm install express cors dotenv node-fetch
+# Instalar APENAS as dependências do servidor bunker
+# Criamos um package.json temporário com "type": "module" para o Node aceitar a sintaxe 'import' do seu server.js
+RUN echo '{"type": "module"}' > package.json && \
+    npm install express cors dotenv node-fetch
 
 # Copiar o bundle do frontend e o arquivo do servidor
 COPY --from=builder /app/artifacts/ironpress-gold/dist/public ./dist
@@ -38,6 +40,8 @@ COPY --from=builder /app/artifacts/ironpress-gold/server.js ./
 EXPOSE 8080
 
 # Comando de Inicialização do Bunker
+# Usamos node direto para carregamento rápido
 CMD ["node", "server.js"]
+
 
 
