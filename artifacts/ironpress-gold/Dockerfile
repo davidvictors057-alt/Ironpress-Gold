@@ -7,7 +7,7 @@ RUN npm install -g pnpm
 WORKDIR /app
 
 # Copiar arquivos de configuração do Monorepo (Raiz)
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc tsconfig*.json ./
 COPY artifacts/ironpress-gold ./artifacts/ironpress-gold
 COPY lib ./lib
 COPY attached_assets ./attached_assets
