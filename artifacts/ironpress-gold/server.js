@@ -81,7 +81,7 @@ const publicPath = path.join(__dirname, 'dist');
 app.use(express.static(publicPath));
 
 // 4. Fallback para SPA (Single Page Application)
-app.get('*', (req, res) => {
+app.get('/*', (req, res) => {
   res.sendFile(path.join(publicPath, 'index.html'));
 });
 
