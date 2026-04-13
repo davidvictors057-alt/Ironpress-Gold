@@ -77,9 +77,9 @@ app.post('/api/ai/executor', async (req, res) => {
   }
 });
 
-// 3. Servir arquivos estáticos do Vite (App Ironside)
+// 3. Servir arquivos estáticos do Vite (App Ironside) ignorando o index.html padrão
 const publicPath = path.join(__dirname, 'dist');
-app.use(express.static(publicPath));
+app.use(express.static(publicPath, { index: false }));
 
 // 4. Fallback para SPA com Injeção de Variáveis Dinâmicas
 app.get('/*', (req, res) => {
