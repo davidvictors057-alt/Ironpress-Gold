@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { Trophy, Crown, Flame, Camera, ChevronRight, Dumbbell, Target, X, Info, Star, Edit2, Trash2, Plus } from "lucide-react";
+import { Trophy, Crown, Flame, Camera, ChevronRight, Dumbbell, Target, X, Info, Star, Edit2, Trash2, Plus, LogOut } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from "recharts";
 import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
+import { persistence, IronsideProfile } from "../lib/persistence";
 
 function getDaysUntil(dateStr: string): number {
   if (!dateStr) return 0;
@@ -29,7 +31,7 @@ function CountdownCard({ comp }: { comp: any }) {
             Próximo Campeonato
           </span>
         </div>
-        <span className="text-xs text-gray-400 border border-[#F5B700]/30 px-2 py-0.5 rounded-full">
+        <span className="text-xs text-gray-400 border border-[#F5B700]/30 px-2 py-0.5 rounded-full uppercase">
           {comp.modality}
         </span>
       </div>
@@ -50,8 +52,34 @@ function CountdownCard({ comp }: { comp: any }) {
   );
 }
 
-function TodayTrainingCard() {
+function TodayTrainingCard({ workout }: { workout: any }) {
   const [, setLocation] = useLocation();
+
+  if (!workout) {
+    return (
+      <div className="card-dark p-4 border border-[#2A2A2A] opacity-60" data-testid="card-today-training">
+        <div className="flex items-center gap-2 mb-3">
+          <Dumbbell className="text-[#F5B700]" size={20} />
+          <span className="text-sm font-semibold text-[#F5B700] uppercase tracking-wider">
+            Treino de Hoje
+          </span>
+        </div>
+        <p className="text-gray-400 text-sm mb-4 italic text-center py-4">
+          Nenhum treino registrado recentemente.
+        </p>
+        <button
+          className="btn-gold w-full py-2 text-sm font-bold uppercase tracking-widest"
+          data-testid="button-register-training"
+          onClick={() => setLocation("/treinos")}
+        >
+          Registrar Treino
+        </button>
+      </div>
+    );
+  }
+
+  const modalityLabel = workout.modality === 'F8' ? 'EQUIPADO F8' : 'RAW';
+
   return (
     <div className="card-dark p-4 border border-[#2A2A2A]" data-testid="card-today-training">
       <div className="flex items-center gap-2 mb-3">
@@ -60,74 +88,26 @@ function TodayTrainingCard() {
           Treino de Hoje
         </span>
       </div>
-      <p className="text-white font-semibold mb-1">Supino Reto RAW</p>
-      <p className="text-gray-300 text-sm mb-1">4x6 @ 185kg — RPE 8</p>
+      <p className="text-white font-semibold mb-1">Supino Reto {modalityLabel}</p>
+      <p className="text-gray-300 text-sm mb-1">
+        Meta: {workout.target_weight}kg — RPE {workout.rpe}
+      </p>
       <p className="text-gray-400 text-xs mb-4">
         <Target size={12} className="inline mr-1 text-[#F5B700]" />
-        Alvo: 190kg
+        Realizado: <span className="text-white font-bold">{workout.actual_weight}kg</span>
       </p>
       <button
         className="btn-gold w-full py-2 text-sm font-bold uppercase tracking-widest"
         data-testid="button-register-training"
         onClick={() => setLocation("/treinos")}
       >
-        Registrar Treino
+        Novo Treino
       </button>
     </div>
   );
 }
 
-function AchievementFormModal({ initial, onSave, onClose }: { initial?: any, onSave: (d: any) => void, onClose: () => void }) {
-  const [label, setLabel] = useState(initial?.label || "");
-  const [date, setDate] = useState(initial?.date || "");
-  const [details, setDetails] = useState(initial?.details || "");
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-[#1A1A1A] border border-gold w-full max-w-sm rounded-2xl p-6 relative" onClick={e => e.stopPropagation()}>
-        <h4 className="text-gold font-black text-lg mb-4 uppercase">{initial ? 'Editar' : 'Nova'} Conquista</h4>
-        <div className="space-y-4">
-          <div>
-            <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest mb-1 block">Título</label>
-            <input 
-              className="w-full bg-[#0A0A0A] border border-gold/30 rounded-xl px-4 py-3 text-white text-sm focus:border-gold outline-none"
-              placeholder="Ex: Campeão Mundial GPC"
-              value={label}
-              onChange={e => setLabel(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest mb-1 block">Data/Ano</label>
-            <input 
-              className="w-full bg-[#0A0A0A] border border-gold/30 rounded-xl px-4 py-3 text-white text-sm focus:border-gold outline-none"
-              placeholder="Ex: 2023"
-              value={date}
-              onChange={e => setDate(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-gray-500 uppercase font-black tracking-widest mb-1 block">Detalhes (PRs, Localização, etc)</label>
-            <textarea 
-              className="w-full bg-[#0A0A0A] border border-gold/30 rounded-xl px-4 py-3 text-white text-sm focus:border-gold outline-none h-24"
-              placeholder="Conte como foi essa conquista..."
-              value={details}
-              onChange={e => setDetails(e.target.value)}
-            />
-          </div>
-          <div className="flex gap-2 pt-2">
-            <button className="flex-1 py-3 text-gray-400 font-bold" onClick={onClose}>Cancelar</button>
-            <button 
-              className="flex-1 btn-gold py-3 font-bold" 
-              onClick={() => onSave({ label, date, details })}
-            >
-              Salvar
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+// AchievementFormModal removed, shifted to Coach Settings.
 
 function EvolutionChart({ data }: { data: any[] }) {
   return (
@@ -139,7 +119,7 @@ function EvolutionChart({ data }: { data: any[] }) {
         <LineChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2A" />
           <XAxis dataKey="week" tick={{ fill: "#B0B0B0", fontSize: 11 }} />
-          <YAxis tick={{ fill: "#B0B0B0", fontSize: 11 }} domain={["auto", "auto"]} />
+          <YAxis tick={{ fill: "#B0B0B0", fontSize: 11 }} domain={[(dataMin: number) => Math.floor(dataMin * 0.9), "auto"]} />
           <Tooltip
             contentStyle={{ backgroundColor: "#1A1A1A", border: "1px solid #F5B700", borderRadius: 8 }}
             labelStyle={{ color: "#F5B700" }}
@@ -147,13 +127,13 @@ function EvolutionChart({ data }: { data: any[] }) {
           />
           <Legend
             formatter={(value) => (
-              <span style={{ color: "#B0B0B0", fontSize: 12 }}>
-                {value === "raw" ? "RAW" : "Equipado F8"}
+              <span style={{ color: "#B0B0B0", fontSize: 12, fontWeight: "900", textTransform: "uppercase" }}>
+                {value === "RAW" ? "RAW" : "EQUIPADO F8"}
               </span>
             )}
           />
-          <Line type="monotone" dataKey="raw" stroke="#F5B700" strokeWidth={2.5} dot={{ fill: "#F5B700", r: 4 }} name="raw" />
-          <Line type="monotone" dataKey="equipped" stroke="#FF8C00" strokeWidth={2.5} dot={{ fill: "#FF8C00", r: 4 }} name="equipped" />
+          <Line type="monotone" dataKey="RAW" stroke="#F5B700" strokeWidth={2.5} dot={{ fill: "#F5B700", r: 4 }} name="RAW" connectNulls={true} />
+          <Line type="monotone" dataKey="EQUIPADO_F8" stroke="#FF8C00" strokeWidth={2.5} dot={{ fill: "#FF8C00", r: 4 }} name="EQUIPADO_F8" connectNulls={true} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -162,15 +142,16 @@ function EvolutionChart({ data }: { data: any[] }) {
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
+  const { logout } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [profile, setProfile] = useState<any>(null);
   const [nextComp, setNextComp] = useState<any>(null);
   const [evolution, setEvolution] = useState<any[]>([]);
+  const [latestWorkout, setLatestWorkout] = useState<any>(null);
   const [selectedAch, setSelectedAch] = useState<any>(null);
   const [editingAch, setEditingAch] = useState<any>(null);
   const [isAdding, setIsAdding] = useState(false);
-
-  const fileInputRef = useState<any>(null);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => { 
     setMounted(true);
@@ -179,27 +160,105 @@ export default function Dashboard() {
 
   async function fetchDashboardData() {
     try {
-      // Fetch Profile
-      const { data: pData } = await supabase.from('profiles').select('*').limit(1).single();
+      // Fetch Profile via Persistence Engine (Resiliente: Cloud + Local Fallback)
+      const pData = await persistence.loadProfile();
       if (pData) setProfile(pData);
 
       // Fetch Next Comp
       const { data: cData } = await supabase.from('competitions').select('*').order('date', { ascending: true }).limit(1).single();
       if (cData) setNextComp(cData);
 
-      // Fetch Evolution (Mocking aggregate for now from workouts)
-      const { data: wData } = await supabase.from('workouts').select('*').order('created_at', { ascending: true });
-      if (wData) {
-        // Simple mock mapping to chart format
-        const mapped = wData.slice(-8).map((w, i) => ({
-          week: `S${i+1}`,
-          raw: w.modality === 'RAW' ? w.load_kg : 180 + i*2,
-          equipped: w.modality === 'F8' ? w.load_kg : 260 + i*3
-        }));
+      // Fetch Evolution and Latest Workout (Real Data from Workouts)
+      const { data: wData } = await supabase
+        .from('workouts')
+        .select('*')
+        .order('workout_date', { ascending: true });
+
+      if (wData && wData.length > 0) {
+        // Set latest workout for the Today's Training card
+        setLatestWorkout(wData[wData.length - 1]);
+
+        // Group by date and modality to show last 8 data points
+        const allDates = [...new Set(wData.map(d => d.workout_date))].sort().slice(-8);
+        const mapped = allDates.map((date, i) => {
+          const raw = wData.find(d => d.workout_date === date && d.modality === 'RAW')?.actual_weight;
+          const eq = wData.find(d => d.workout_date === date && d.modality === 'F8')?.actual_weight;
+          return {
+            week: `S${i+1}`,
+            date: new Date(date).toLocaleDateString("pt-BR").slice(0, 5),
+            RAW: raw || null,
+            EQUIPADO_F8: eq || null
+          };
+        });
         setEvolution(mapped);
       }
     } catch (e) {
       console.error(e);
+    }
+  }
+
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Local Preview Immediate (Cultura Ironside: Velocidade)
+    const previewUrl = URL.createObjectURL(file);
+    const updatedProfile = { ...profile, avatar_url: previewUrl };
+    setProfile(updatedProfile);
+    persistence.saveProfile(updatedProfile); // Salva localmente imediatamente
+
+    try {
+      setUploading(true);
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `${fileName}`;
+
+      // Upload to 'avatars' bucket
+      const { error } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file);
+
+      if (error) {
+        console.warn("Storage fallida, mantendo local:", error.message);
+        throw error;
+      }
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      // Sync via Persistence Engine
+      // Ironside Sync: Garantir que o ID do perfil seja preservado ou buscado da auth
+      const { data: { user } } = await supabase.auth.getUser();
+      const finalProfile = { 
+        ...profile, 
+        id: profile?.id || user?.id,
+        avatar_url: publicUrl 
+      };
+      
+      console.log("[DB ESPECIALISTA.agente] Sincronizando avatar no DB:", finalProfile.id);
+      const { success, error: dbError } = await persistence.saveProfile(finalProfile);
+      
+      if (success) {
+        setProfile(finalProfile);
+        alert("Avatar sincronizado na nuvem com sucesso!");
+      } else {
+        console.error("[DB ESPECIALISTA.agente] Erro de sincronia DB:", dbError);
+        alert("Salvo localmente. O DB ainda não reconhece o campo avatar_url. Tente renovar a sessão.");
+      }
+    } catch (err: any) {
+      console.error("[SISTEMA] Erro crítico no upload de mídia:", err);
+      
+      let guidance = "Aviso: Foto salva apenas localmente.";
+      if (err.message?.includes("Bucket not found") || err.status === 404) {
+        guidance = "⚠️ ERRO DE INFRAESTRUTURA: O bucket 'avatars' não foi encontrado no seu Supabase. \n\nInstrução: Vá ao painel do Supabase > Storage > New Bucket > Nomeie como 'avatars' e marque como PUBLIC.";
+      } else {
+        guidance = `Aviso: Sincronização falhou (${err.message}). Foto salva apenas neste dispositivo.`;
+      }
+      
+      alert(guidance);
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -237,85 +296,111 @@ export default function Dashboard() {
 
   return (
     <div className="pb-6 space-y-4">
+      {/* Top Header with Logout */}
+      <div className="flex justify-end px-4 pt-6 -mb-4">
+        <button 
+          onClick={() => logout()}
+          className="p-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded-full hover:bg-red-500 hover:text-white transition-all flex items-center gap-1.5 px-3 py-1"
+        >
+          <LogOut size={14} />
+          <span className="text-[10px] font-black uppercase tracking-widest">Sair</span>
+        </button>
+      </div>
+
       {/* Hero Header */}
       <div className="text-center py-6 px-4">
+        <input 
+          id="avatar-upload" 
+          type="file" 
+          accept="image/*" 
+          className="hidden" 
+          onChange={handleAvatarUpload} 
+        />
         <div 
-          className="w-24 h-24 rounded-full bg-[#1A1A1A] border-2 border-gold flex items-center justify-center mx-auto mb-4 shadow-xl overflow-hidden cursor-pointer relative group"
-          onClick={() => document.getElementById('avatar-input')?.click()}
+          onClick={() => document.getElementById('avatar-upload')?.click()}
+          className="w-24 h-24 rounded-full bg-[#1A1A1A] border-2 border-gold flex items-center justify-center mx-auto mb-4 shadow-xl overflow-hidden relative cursor-pointer group hover:border-[#F5B700] transition-all"
         >
           {profile?.avatar_url ? (
             <img src={profile.avatar_url} className="w-full h-full object-cover" />
           ) : (
             <div className="flex flex-col items-center">
               <span className="text-gold font-black text-3xl" style={{ fontFamily: "Montserrat, sans-serif" }}>IR</span>
-              <Camera size={14} className="text-gold/50" />
             </div>
           )}
-          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-            <Camera size={20} className="text-gold" />
+          {uploading && (
+            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+              <div className="w-6 h-6 border-2 border-gold border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+            <Camera size={24} className="text-white" />
           </div>
-          <input 
-            id="avatar-input"
-            type="file" 
-            className="hidden" 
-            accept="image/*"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                const url = URL.createObjectURL(file);
-                setProfile({ ...profile, avatar_url: url });
-              }
-            }}
-          />
         </div>
         <h1 className="text-5xl font-black text-[#F5B700] tracking-tighter" style={{ fontFamily: "Montserrat, sans-serif" }}>
           IRONSIDE
         </h1>
         <p className="text-gray-400 text-xs font-bold uppercase tracking-[0.2em] mb-2">
-          Leonardo Rodrigues
+          {profile?.name || "Leonardo Rodrigues"}
         </p>
         <div className="h-px w-12 bg-gold/30 mx-auto mb-3" />
         <p className="text-gray-300 text-sm">
-          95kg | Categoria 100kg
+          {profile?.weight ? `${profile.weight}kg` : "95kg"} | {profile?.category ? `Categoria ${profile.category}` : "Categoria 100kg"}
         </p>
       </div>
 
       {/* Welcome Banner */}
-      <div className="mx-4 card-dark border border-[#F5B700]/30 p-4" data-testid="card-welcome">
+      <div 
+        onClick={() => setLocation("/coach")}
+        className="mx-4 card-dark border border-[#F5B700]/30 p-4 cursor-pointer hover:bg-gold/5 transition-colors" 
+        data-testid="card-welcome"
+      >
         <div className="flex items-center gap-2">
-          <Crown className="text-[#F5B700]" size={22} />
+          <Flame className="text-[#F5B700] group-hover:text-red-500 transition-colors drop-shadow-[0_0_8px_transparent] group-hover:drop-shadow-[0_0_12px_#ef4444]" size={22} />
           <div>
-            <p className="text-white font-bold">Bem-vindo de volta, Campeão Mundial!</p>
+            <p className="text-white font-bold">{profile?.welcome_message || "Bem-vindo de volta, Campeão Mundial!"}</p>
             <p className="text-gray-400 text-xs">Hoje é dia de superação, Ironside.</p>
           </div>
         </div>
       </div>
 
-      {/* Record Badges */}
-      <div className="mx-4 space-y-3">
-        <div className="card-dark border border-gold/40 rounded-xl p-4 flex items-center gap-4 shadow-[0_0_20px_rgba(245,183,0,0.05)] relative overflow-hidden group">
-          <div className="absolute top-0 left-0 w-1 h-full bg-gold" />
-          <div className="bg-gold/10 p-2.5 rounded-lg border border-gold/20">
-            <Crown className="text-gold" size={24} />
+      {/* Performance Badges (Sala de Troféus) */}
+      <div className="px-4 space-y-3">
+        {profile?.highlights && profile.highlights.length > 0 ? (
+          <div className="grid grid-cols-1 gap-3">
+            {profile.highlights.map((h: any, index: number) => (
+              <div 
+                key={index} 
+                className="card-dark border border-[#F5B700]/20 p-4 flex items-center justify-between group hover:border-[#F5B700]/50 transition-all relative overflow-hidden active:scale-[0.98]"
+              >
+                <div className="absolute top-0 right-0 w-24 h-24 bg-[#F5B700]/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-[#F5B700]/10 transition-colors" />
+                <div className="flex items-center gap-4 relative z-10">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#F5B700]/20 to-black border border-[#F5B700]/30 flex items-center justify-center shadow-lg group-hover:bg-[#F5B700]/30 transition-all">
+                    <Trophy size={20} className="text-[#F5B700]" />
+                  </div>
+                  <div>
+                    <p className="text-white font-black text-sm uppercase tracking-wider leading-tight">{h.title}</p>
+                    <p className="text-[9px] text-gray-500 font-black uppercase tracking-[0.2em] leading-tight mt-0.5">{h.subtitle || "Campeão e Recordista"}</p>
+                  </div>
+                </div>
+                <Flame size={16} className="text-gray-800 group-hover:text-red-500/80 transition-all transform group-hover:rotate-12 group-hover:scale-125 drop-shadow-[0_0_0px_transparent] group-hover:drop-shadow-[0_0_10px_#ef4444]" />
+              </div>
+            ))}
           </div>
-          <div>
-            <p className="text-gold font-black text-[10px] uppercase tracking-[0.2em] mb-0.5">Campeão e Recordista</p>
-            <p className="text-white font-black text-lg leading-tight uppercase">Arnold Classic Brasil 2025</p>
+        ) : (
+          /* Fallback se não houver destaques */
+          <div 
+             onClick={() => setLocation("/coach")}
+             className="card-dark border border-white/5 p-10 flex flex-col items-center justify-center gap-4 cursor-pointer opacity-60 hover:opacity-100 transition-all group hover:border-[#F5B700]/30"
+          >
+            <div className="w-16 h-16 rounded-full border border-dashed border-gray-700 flex items-center justify-center group-hover:border-[#F5B700]/50 transition-colors">
+              <Trophy size={32} className="text-gray-800 group-hover:text-[#F5B700]/30 transition-colors" />
+            </div>
+            <div className="text-center">
+              <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest leading-relaxed mb-1">Sala de Troféus Vazia</p>
+              <p className="text-[8px] text-gray-600 font-bold uppercase tracking-widest">Toque para configurar seus recordes de elite.</p>
+            </div>
           </div>
-          <Flame className="text-gold/50 group-hover:text-orange-500 transition-colors ml-auto" size={22} />
-        </div>
-
-        <div className="card-dark border border-gold/20 rounded-xl p-4 flex items-center gap-4 relative overflow-hidden group">
-          <div className="absolute top-0 left-0 w-1 h-full bg-gold/50" />
-          <div className="bg-gold/5 p-2.5 rounded-lg border border-gold/10">
-            <Crown className="text-gold/70" size={24} />
-          </div>
-          <div>
-            <p className="text-gold/70 font-black text-[10px] uppercase tracking-[0.2em] mb-0.5">Campeão e Recordista Mundial</p>
-            <p className="text-white font-black text-lg leading-tight uppercase">Camboriú — GPC Brasil</p>
-          </div>
-          <Flame className="text-gold/30 group-hover:text-orange-500 transition-colors ml-auto" size={22} />
-        </div>
+        )}
       </div>
 
       {/* Stats Row */}
@@ -339,7 +424,7 @@ export default function Dashboard() {
 
       {/* Today's Training */}
       <div className="mx-4">
-        <TodayTrainingCard />
+        <TodayTrainingCard workout={latestWorkout} />
       </div>
 
       {/* Evolution Chart */}
@@ -364,12 +449,6 @@ export default function Dashboard() {
       <div className="mx-4 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-[#F5B700] font-bold text-sm uppercase tracking-wider">Minha História</h3>
-          <button 
-            className="flex items-center gap-1 text-[10px] bg-gold/10 text-gold border border-gold/30 px-2 py-1 rounded-full uppercase font-bold"
-            onClick={() => setIsAdding(true)}
-          >
-            <Plus size={10} /> Adicionar
-          </button>
         </div>
         
         {(profile?.achievements || []).map((ach: any, i: number) => (
@@ -381,23 +460,11 @@ export default function Dashboard() {
             <div className="flex items-center gap-3 flex-1" onClick={() => setSelectedAch(ach)}>
               <Trophy className="text-[#F5B700]" size={18} />
               <div className="flex flex-col">
-                <span className="text-gray-200 text-sm font-bold">{ach.label}</span>
+                <span className="text-gray-200 text-sm font-bold uppercase">{ach.label}</span>
                 <span className="text-gray-500 text-[10px] uppercase font-black tracking-widest">{ach.date}</span>
               </div>
             </div>
-            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button 
-                onClick={(e) => { e.stopPropagation(); setEditingAch({ ...ach, index: i }); }}
-                className="p-1.5 rounded bg-black/40 hover:text-gold"
-              >
-                <Edit2 size={13} />
-              </button>
-              <button 
-                onClick={(e) => { e.stopPropagation(); handleDeleteAch(i); }}
-                className="p-1.5 rounded bg-black/40 hover:text-red-500"
-              >
-                <Trash2 size={13} />
-              </button>
+            <div className="flex gap-2">
               <ChevronRight className="text-gray-600 mt-1" size={16} />
             </div>
           </div>
@@ -410,14 +477,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Edit/Add Modal */}
-      {(isAdding || editingAch) && (
-        <AchievementFormModal 
-          initial={editingAch} 
-          onSave={handleEditOrAdd} 
-          onClose={() => { setIsAdding(false); setEditingAch(null); }} 
-        />
-      )}
+      {/* Achievement Edit Modals removed (moved to Coach Settings) */}
 
       {/* Achievement Detail Modal */}
       {selectedAch && (

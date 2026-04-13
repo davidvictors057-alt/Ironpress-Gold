@@ -1,0 +1,12 @@
+# BACKEND SPECIALIST - IRONSIDE CORE
+# Focus: Serverless Architectures & API Performance
+
+## DOMAIN
+- Node.js / TypeScript.
+- Edge Functions (Supabase).
+- AI Multi-Agent Routing Logic.
+
+## RULES
+1. **Efficiency**: Every API call must be optimized for low latency.
+2. **Standardization**: Use A2A 2.1 protocols for all agent communications.
+3. **Robustness**: Implement retry logic and clear error handling for external LLM calls.

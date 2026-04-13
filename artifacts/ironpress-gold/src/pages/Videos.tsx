@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
-import { Play, Crown, Share2, X, MessageSquare, Activity, Plus, Trash2, Upload } from "lucide-react";
+import { Play, Crown, Share2, X, MessageSquare, Activity, Plus, Trash2, Database, Clock, Flame } from "lucide-react";
 import BiomechAnalysisOverlay from "../components/BiomechAnalysisOverlay";
 import { supabase } from "../lib/supabase";
+import VideoUploadModal from "../components/VideoUploadModal.tsx";
+import { copyToClipboard, cleanTextForSharing, openWhatsApp } from "../lib/utils";
 
 interface VideoRecord {
   id: string;
@@ -10,13 +12,6 @@ interface VideoRecord {
   modality: string;
   isRecord: boolean;
   storage_path?: string;
-}
-
-// Removido o uso de DEFAULT_VIDEOS e saves locais para focar no Supabase
-
-function generateCode() {
-  const codes = ["IRON123", "IRON456", "SIDE789", "GOLD001", "PRESS42"];
-  alert(`Código compartilhado: ${codes[Math.floor(Math.random() * codes.length)]}`);
 }
 
 function VideoModal({
@@ -38,154 +33,99 @@ function VideoModal({
     setTimeout(() => setSavedMsg(""), 2000);
   }
 
+  const shareVideoData = async () => {
+    const textToShare = `*REGISTRO IRONSIDE ELITE* 📹
+*Atleta/Treino*: ${video.title}
+*Data*: ${video.date}
+*Modalidade*: ${video.modality}
+*Status*: ${video.isRecord ? '🏆 Personal Record (PR)' : 'Treino de rotina'}
+
+*Bloco de Anotações:*
+${comment || "Sem observações anexadas."}
+
+_Powered by Laboratório de Biomecânica Ironside_`;
+
+    const cleanedText = cleanTextForSharing(textToShare);
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Vídeo Ironside: ${video.title}`,
+          text: cleanedText
+        });
+      } catch (err) {
+        openWhatsApp(cleanedText);
+      }
+    } else {
+      openWhatsApp(cleanedText);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/90 flex flex-col z-50">
-      <div className="flex items-center justify-between p-4 border-b border-[#2A2A2A]">
+      <div className="flex items-center justify-between p-4 border-b border-white/5">
         <div className="flex items-center gap-2">
           {video.isRecord && <Crown className="text-[#F5B700]" size={18} />}
           <span className="text-white font-bold text-sm truncate max-w-[220px]">{video.title}</span>
         </div>
-        <button onClick={onClose} data-testid="button-close-modal"><X size={24} className="text-gray-400" /></button>
+        <button onClick={onClose}><X size={24} className="text-gray-400" /></button>
       </div>
 
-      <div className="mx-4 mt-4 bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] aspect-video flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 rounded-full bg-[#F5B700]/20 border-2 border-[#F5B700] flex items-center justify-center mx-auto mb-3">
-            <Play className="text-[#F5B700]" size={28} fill="#F5B700" />
+      <div className="mx-4 mt-6 bg-[#050505] rounded-3xl border border-white/5 aspect-video max-h-[40vh] sm:max-h-[50vh] relative overflow-hidden group shadow-2xl flex items-center justify-center">
+        {video.storage_path ? (
+          <video 
+            src={supabase.storage.from('videos').getPublicUrl(video.storage_path).data.publicUrl} 
+            className="w-full h-full object-contain" 
+            controls 
+            playsInline
+          />
+        ) : (
+          <div className="relative z-10 text-center">
+            <div className="w-20 h-20 rounded-full bg-[#F5B700]/10 border border-[#F5B700]/30 flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-500 shadow-[0_0_30px_rgba(245,183,0,0.1)]">
+              <Play className="text-[#F5B700] ml-1" size={32} fill="#F5B700" />
+            </div>
+            <p className="text-gray-400 text-[10px] font-black uppercase tracking-[0.3em]">Visualização Não Disponível</p>
           </div>
-          <p className="text-gray-400 text-sm">Player Simulado</p>
-          <p className="text-gray-600 text-xs mt-1">{video.date} — {video.modality}</p>
-        </div>
+        )}
       </div>
 
       <div className="mx-4 mt-3 space-y-2 flex-1 overflow-y-auto pb-4">
         <button
-          className="w-full btn-gold py-3 flex items-center justify-center gap-2 text-sm font-bold"
+          className="w-full bg-[#F5B700] text-black py-4 rounded-xl flex items-center justify-center gap-2 text-sm font-black uppercase tracking-widest shadow-lg shadow-[#F5B700]/10"
           onClick={onAnalyze}
-          data-testid="button-analyze-movement"
         >
           <Activity size={18} />
-          Analisar Movimento (MediaPipe IA)
+          Análise de Performance
         </button>
 
         <div className="flex gap-2">
           <button
-            className="flex-1 btn-gold-outline py-2.5 flex items-center justify-center gap-2 text-sm"
-            onClick={generateCode}
-            data-testid="button-share-coach"
+            className="flex-1 bg-white/5 hover:bg-white/10 text-white rounded-xl py-3 flex items-center justify-center gap-2 text-[11px] font-black uppercase tracking-widest border border-white/5 transition-all"
+            onClick={shareVideoData}
           >
             <Share2 size={16} className="text-[#F5B700]" />
-            Compartilhar
+            Compartilhar Dados
           </button>
         </div>
 
-        <div className="card-dark p-3 border border-[#2A2A2A]">
-          <p className="text-[#F5B700] text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-1">
+        <div className="bg-black/40 p-4 border border-white/5 rounded-2xl">
+          <p className="text-[#F5B700] text-[9px] font-black uppercase tracking-[0.2em] mb-2 flex items-center gap-2">
             <MessageSquare size={13} />
-            Comentários
+            Bloco de Notas
           </p>
           <textarea
-            className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-lg p-2 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:border-[#F5B700]"
-            placeholder="Adicione um comentário sobre este treino..."
+            className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:border-[#F5B700] transition-colors"
+            placeholder="Anotações técnicas sobre a execução..."
             value={comment}
             onChange={e => { setComment(e.target.value); setSavedMsg(""); }}
             rows={3}
-            data-testid="input-comment"
           />
-          <div className="flex items-center justify-between mt-2">
-            <p className="text-green-400 text-xs">{savedMsg}</p>
-            <button className="btn-gold px-4 py-1.5 text-sm font-bold" onClick={handleSaveComment} data-testid="button-save-comment">
+          <div className="flex items-center justify-between mt-3">
+            <p className="text-green-400 text-[10px] font-bold uppercase tracking-wider">{savedMsg}</p>
+            <button className="bg-[#F5B700] text-black px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest" onClick={handleSaveComment}>
               Salvar
             </button>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AddVideoModal({ onAdd, onClose }: { onAdd: () => void; onClose: () => void }) {
-  const [title, setTitle] = useState("");
-  const [modality, setModality] = useState("EQUIPADO F8");
-  const [isRecord, setIsRecord] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-
-  async function handleAdd() {
-    if (!title.trim() || !file) return;
-    setUploading(true);
-    
-    try {
-      const fileName = `${Date.now()}-${file.name}`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('videos')
-        .upload(fileName, file);
-
-      if (uploadError) throw uploadError;
-
-      const { error: dbError } = await supabase
-        .from('videos')
-        .insert({
-          title: title.trim(),
-          modality,
-          is_record: isRecord,
-          storage_path: uploadData.path,
-        });
-
-      if (dbError) throw dbError;
-
-      onAdd();
-      onClose();
-    } catch (error: any) {
-      alert("Erro no upload: " + error.message);
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-end z-50" onClick={onClose}>
-      <div
-        className="w-full bg-[#1A1A1A] rounded-t-3xl p-5 border-t border-[#F5B700]/30"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="w-10 h-1 bg-[#2A2A2A] rounded-full mx-auto mb-4" />
-        <h3 className="text-[#F5B700] font-black text-lg mb-4">Novo Vídeo</h3>
-        <div className="space-y-3">
-          <input className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" placeholder="Título" value={title} onChange={e => setTitle(e.target.value)} />
-          
-          <div className="relative">
-            <input 
-              type="file" 
-              accept="video/*" 
-              className="hidden" 
-              id="video-upload" 
-              onChange={e => setFile(e.target.files?.[0] || null)} 
-            />
-            <label 
-              htmlFor="video-upload" 
-              className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-gray-400 text-sm flex items-center gap-2 cursor-pointer hover:border-[#F5B700]"
-            >
-              <Upload size={16} />
-              {file ? file.name : "Selecionar Vídeo"}
-            </label>
-          </div>
-
-          <select className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" value={modality} onChange={e => setModality(e.target.value)}>
-            <option value="EQUIPADO F8">EQUIPADO F8</option>
-            <option value="RAW">RAW</option>
-          </select>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={isRecord} onChange={e => setIsRecord(e.target.checked)} className="accent-[#F5B700]" />
-            <span className="text-gray-300 text-sm">É um recorde</span>
-          </label>
-          <button 
-            className="btn-gold w-full py-3 font-black text-sm disabled:opacity-50" 
-            onClick={handleAdd}
-            disabled={uploading}
-          >
-            {uploading ? "Fazendo Upload..." : "Adicionar Vídeo"}
-          </button>
         </div>
       </div>
     </div>
@@ -198,14 +138,20 @@ export default function Videos() {
   const [analyzeVideo, setAnalyzeVideo] = useState<VideoRecord | null>(null);
   const [showAddVideo, setShowAddVideo] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const [profile, setProfile] = useState<any>(null);
 
   useEffect(() => {
+    fetchProfile();
     fetchVideos();
   }, []);
 
-  const handleAddVideo = () => {
-    fetchVideos();
-  };
+  async function fetchProfile() {
+    const { persistence } = await import("../lib/persistence");
+    const p = await persistence.loadProfile();
+    setProfile(p);
+  }
 
   async function fetchVideos() {
     try {
@@ -225,109 +171,153 @@ export default function Videos() {
         storage_path: v.storage_path
       })));
     } catch (error) {
-      console.error("Erro ao carregar vídeos:", error);
+      console.error("Erro ao carregar vdeos:", error);
     } finally {
       setLoading(false);
     }
   }
 
   async function handleDeleteVideo(id: string) {
-    if (!confirm("Tem certeza que deseja excluir este vídeo?")) return;
-    
     try {
       const videoToDelete = videos.find(v => v.id === id);
       if (videoToDelete?.storage_path) {
         await supabase.storage.from('videos').remove([videoToDelete.storage_path]);
       }
       
-      const { error } = await supabase
-        .from('videos')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabase.from('videos').delete().eq('id', id);
       if (error) throw error;
       setVideos(prev => prev.filter(v => v.id !== id));
+      setDeletingId(null);
     } catch (error) {
-      alert("Erro ao excluir vídeo.");
+      alert("Erro ao excluir registro.");
     }
   }
 
   return (
     <div className="pb-6 space-y-4">
-      <div className="px-4 pt-6 pb-2">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2">
-            <Play className="text-[#F5B700]" size={22} />
-            <h1 className="text-2xl font-black text-white" style={{ fontFamily: "Montserrat, sans-serif" }}>VÍDEOS</h1>
+      <div className="px-4 sm:px-6 pt-6 sm:pt-10 pb-4">
+        <div className="flex flex-col gap-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 sm:p-4 bg-[#F5B700]/10 rounded-2xl border border-[#F5B700]/20 flex-shrink-0 shadow-[0_0_20px_rgba(245,183,0,0.05)]">
+              <Database className="text-[#F5B700]" size={26} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="flex flex-col text-2xl sm:text-4xl font-black text-white tracking-tighter leading-[0.8] mb-3" style={{ fontFamily: "Montserrat, sans-serif" }}>
+                <span>LABORATÓRIO DE</span>
+                <span className="text-[#F5B700]">BIOMECÂNICA</span>
+              </h1>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <p className="text-[#F5B700] text-[10px] sm:text-[11px] font-black uppercase tracking-[0.4em] sm:pl-3 sm:border-l-2 border-[#F5B700]/30 py-1">
+                  Bio-Engenharia
+                </p>
+                <div className="h-1.5 w-1.5 rounded-full bg-[#F5B700]/30 hidden sm:block" />
+                <span className="text-[9px] text-gray-500 font-bold uppercase tracking-[0.2em]">Hub Neural Ironside</span>
+              </div>
+            </div>
           </div>
+          
           <button
-            className="btn-gold px-3 py-1.5 text-xs font-bold flex items-center gap-1"
+            className="w-full bg-[#F5B700] text-black px-6 py-4 rounded-2xl text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl shadow-[#F5B700]/10 hover:bg-[#FF8C00] transition-colors active:scale-95"
             onClick={() => setShowAddVideo(true)}
-            data-testid="button-add-video"
           >
-            <Plus size={14} />
-            Novo
+            <Plus size={20} />
+            Novo Registro
           </button>
         </div>
-        <p className="text-gray-400 text-sm">Biblioteca com análise biomecânica IA</p>
       </div>
 
-      <div className="mx-4 space-y-3" data-testid="list-videos">
+      <div className="mx-4 sm:mx-6 grid grid-cols-1 gap-4">
         {videos.map(video => (
           <div
             key={video.id}
-            className="card-dark border border-[#2A2A2A] p-4 relative transition-all hover:border-[#F5B700]/40"
-            data-testid={`card-video-${video.id}`}
+            className="group card-dark border border-white/5 p-4 sm:p-6 relative transition-all hover:border-[#F5B700]/30 bg-[#0A0A0A] rounded-[2rem]"
           >
-            <div className="flex gap-3">
+            <div className="absolute -top-10 -left-10 w-32 h-32 bg-[#F5B700]/5 rounded-full blur-[40px] opacity-0 group-hover:opacity-100 transition-opacity" />
+            
+            <div className="grid grid-cols-[60px_1fr_90px] sm:grid-cols-[100px_1fr_110px] items-center gap-3 sm:gap-6 relative z-10 w-full">
               <button
-                className="w-20 h-14 bg-[#0A0A0A] rounded-lg flex items-center justify-center border border-[#2A2A2A] flex-shrink-0"
+                className="w-14 h-14 sm:w-24 sm:h-20 bg-black rounded-xl flex items-center justify-center border border-white/5 flex-shrink-0 relative overflow-hidden group/thumb"
                 onClick={() => setSelectedVideo(video)}
               >
-                <Play className="text-[#F5B700]" size={22} fill="#F5B700" />
+                {video.storage_path && (
+                  <video 
+                    src={supabase.storage.from('videos').getPublicUrl(video.storage_path).data.publicUrl} 
+                    className="absolute inset-0 w-full h-full object-cover opacity-40 group-hover/thumb:opacity-60 transition-opacity"
+                    preload="metadata"
+                  />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                <Play className="text-[#F5B700] relative z-10 drop-shadow-lg" size={20} fill="#F5B700" />
               </button>
-              <div className="flex-1 min-w-0" onClick={() => setSelectedVideo(video)}>
-                <div className="flex items-center gap-1 mb-1">
-                  {video.isRecord && <Crown className="text-[#F5B700] flex-shrink-0" size={14} />}
-                  <p className="text-white font-semibold text-sm leading-tight truncate">{video.title}</p>
-                </div>
-                <p className="text-gray-400 text-xs">{video.date}</p>
-                <div className="flex gap-1 mt-1">
-                  <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${video.modality === "RAW" ? "bg-[#F5B700]/20 text-[#F5B700]" : "bg-orange-500/20 text-orange-400"}`}>
-                    {video.modality}
-                  </span>
+
+              <div className="flex-1 min-w-0 flex flex-col justify-center overflow-hidden" onClick={() => setSelectedVideo(video)}>
+                <div className="flex items-center gap-1.5 mb-1 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden">
                   {video.isRecord && (
-                    <span className="inline-block text-xs px-2 py-0.5 rounded-full bg-[#F5B700] text-black font-bold">RECORDE</span>
+                    <div className="relative group/flame">
+                      <Flame className="text-[#F5B700] flex-shrink-0 animate-pulse" size={14} />
+                      <div className="absolute inset-0 bg-[#F5B700] blur-md opacity-20 group-hover/flame:opacity-50 transition-opacity" />
+                    </div>
                   )}
+                  <p className="text-white font-black text-xs sm:text-sm uppercase tracking-tight truncate w-full">{video.title}</p>
+                </div>
+                <div className="flex flex-col items-start gap-1 w-full mt-1.5">
+                  <div className="flex items-center gap-1 text-gray-400 text-[10px] font-bold tracking-wider bg-white/5 px-2 py-0.5 rounded-full w-fit">
+                    <Clock size={10} className="text-[#F5B700]" /> {video.date}
+                  </div>
+                  <span className={`text-[9px] px-2 py-0.5 rounded-lg font-black border tracking-widest uppercase w-fit shrink-0 ${
+                    video.modality?.toUpperCase().includes("RAW") 
+                      ? "border-[#F5B700]/40 text-[#F5B700] bg-[#F5B700]/20" 
+                      : "border-orange-500/40 text-orange-400 bg-orange-500/20"}`}
+                  >
+                    {video.modality || "RAW"}
+                  </span>
                 </div>
               </div>
-              <div className="flex flex-col gap-1">
+
+              <div className="flex items-center gap-1.5 flex-shrink-0 justify-end">
                 <button
-                  className="p-1.5 bg-[#1A1A1A] rounded-lg"
-                  onClick={() => setAnalyzeVideo(video)}
-                  data-testid={`button-analyze-${video.id}`}
-                  title="Análise Biomecânica"
+                  className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-white/5 rounded-xl border border-white/10 hover:bg-[#F5B700] hover:text-black transition-all group active:scale-90"
+                  onClick={(e) => { e.stopPropagation(); setAnalyzeVideo(video); }}
+                  title="Analisar"
                 >
-                  <Activity size={15} className="text-[#F5B700]" />
+                  <Activity size={18} className="group-hover:scale-110 transition-transform" />
                 </button>
-                <button
-                  className="p-1.5 bg-[#1A1A1A] rounded-lg"
-                  onClick={() => handleDeleteVideo(video.id)}
-                  data-testid={`button-delete-video-${video.id}`}
-                >
-                  <Trash2 size={14} className="text-red-400" />
-                </button>
+                {deletingId === video.id ? (
+                  <button
+                    className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-red-500 rounded-xl border border-red-500 text-black transition-all group active:scale-90 animate-pulse"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteVideo(video.id);
+                    }}
+                  >
+                    <Trash2 size={16} className="group-hover:scale-110 transition-transform" />
+                  </button>
+                ) : (
+                  <button
+                    className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-white/5 rounded-xl border border-white/10 hover:bg-red-500/20 hover:text-red-400 transition-all group active:scale-90"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeletingId(video.id);
+                      setTimeout(() => setDeletingId(null), 3000);
+                    }}
+                  >
+                    <Trash2 size={16} className="group-hover:scale-110 transition-transform" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
         ))}
-      </div>
 
-      {videos.length === 0 && (
-        <div className="mx-4 text-center py-8">
-          <p className="text-gray-500">Nenhum vídeo cadastrado.</p>
-        </div>
-      )}
+        {videos.length === 0 && !loading && (
+          <div className="text-center py-20 border-2 border-dashed border-white/5 rounded-[3rem] mx-4 sm:mx-0">
+            <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Database className="text-gray-700" size={24} />
+            </div>
+            <p className="text-gray-600 text-xs font-bold uppercase tracking-widest">Nenhum registro no laboratório.</p>
+          </div>
+        )}
+      </div>
 
       {selectedVideo && (
         <VideoModal
@@ -339,13 +329,28 @@ export default function Videos() {
 
       {analyzeVideo && (
         <BiomechAnalysisOverlay
+          key={analyzeVideo.id}
           videoId={analyzeVideo.id}
           videoTitle={analyzeVideo.title}
-          onClose={() => setAnalyzeVideo(null)}
+          profile={profile}
+          onClose={() => {
+            setAnalyzeVideo(null);
+            fetchVideos();
+          }}
         />
       )}
 
-      {showAddVideo && <AddVideoModal onAdd={handleAddVideo} onClose={() => setShowAddVideo(false)} />}
+
+
+      {showAddVideo && (
+        <VideoUploadModal 
+          onAdd={() => {
+            setShowAddVideo(false);
+            fetchVideos();
+          }} 
+          onClose={() => setShowAddVideo(false)} 
+        />
+      )}
     </div>
   );
 }

@@ -24,7 +24,7 @@ export async function getPoseLandmarker(): Promise<PoseLandmarker> {
         delegate: "GPU",
       },
       runningMode: "VIDEO",
-      numPoses: 1,
+      numPoses: 3,
       minPoseDetectionConfidence: 0.5,
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,

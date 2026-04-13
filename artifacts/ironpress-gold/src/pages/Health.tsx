@@ -5,7 +5,9 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from "recharts";
 import WeekCard, { HormonalWeek } from "../components/hormone/WeekCard";
+import { HormoneSpecialistChat } from "../components/HormoneSpecialistChat";
 import { exportBackup, importBackup } from "../services/storage/backupService";
+import { generateId } from "../lib/utils";
 
 const HEALTH_KEY = "ironside_health_data";
 const SUPPS_KEY = "ironside_supplements";
@@ -59,9 +61,9 @@ function SuppModal({ initial, onSave, onClose }: {
         <h3 className="text-[#F5B700] font-black text-lg mb-4">{initial?.id ? "Editar" : "Novo"} Suplemento</h3>
         <div className="space-y-3">
           <input className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" placeholder="Nome (ex: Creatina)" value={name} onChange={e => setName(e.target.value)} />
-          <div className="flex gap-2">
-            <input className="flex-1 bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" placeholder="Dose (ex: 5g)" value={dose} onChange={e => setDose(e.target.value)} />
-            <input className="w-28 bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" placeholder="g/dia" value={unit} onChange={e => setUnit(e.target.value)} />
+          <div className="grid grid-cols-[1fr_100px] gap-2">
+            <input className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" placeholder="Dose (ex: 5g)" value={dose} onChange={e => setDose(e.target.value)} />
+            <input className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" placeholder="Unid." value={unit} onChange={e => setUnit(e.target.value)} />
           </div>
           <input className="w-full bg-[#0A0A0A] border border-[#F5B700]/30 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-[#F5B700]" placeholder="Horário (ex: Pós-treino)" value={schedule} onChange={e => setSchedule(e.target.value)} />
           <div className="flex items-center gap-2">
@@ -70,7 +72,7 @@ function SuppModal({ initial, onSave, onClose }: {
           </div>
           <button className="btn-gold w-full py-3 font-black text-sm" onClick={() => {
             if (!name.trim()) return;
-            onSave({ id: initial?.id ?? Date.now(), name, dose, unit, schedule, stock: parseInt(stock) || 0 });
+            onSave({ id: initial?.id ?? Date.now().toString(), name, dose, unit, schedule, stock: parseInt(stock) || 0 });
             onClose();
           }}>Salvar</button>
         </div>
@@ -89,20 +91,31 @@ export default function Health() {
   const [showAddSupp, setShowAddSupp] = useState(false);
   const [hormonalWeeks, setHormonalWeeks] = useState<HormonalWeek[]>([]);
   const [chartData, setChartData] = useState<ChartPoint[]>([]);
+  const [metricHistory, setMetricHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+
+  const [profile, setProfile] = useState<any>(null);
 
   useEffect(() => {
+    fetchProfile();
     fetchSupplements();
     fetchHealthMetrics();
     fetchHormonalProtocol();
     fetchCorrelationData();
   }, []);
 
+  async function fetchProfile() {
+    const { persistence } = await import("../lib/persistence");
+    const p = await persistence.loadProfile();
+    setProfile(p);
+  }
+
   async function fetchHealthMetrics() {
     try {
       const { data, error } = await supabase
         .from('health_metrics')
         .select('*')
-        .order('created_at', { descending: false })
+        .order('created_at', { ascending: true })
         .limit(1)
         .single();
       if (error && error.code !== 'PGRST116') throw error;
@@ -126,24 +139,61 @@ export default function Health() {
 
   async function fetchCorrelationData() {
     try {
-      const { data: metrics } = await supabase.from('health_metrics').select('*').order('created_at', { descending: true }).limit(7);
-      const { data: workouts } = await supabase.from('workouts').select('*').order('date', { descending: true }).limit(7);
+      const { data: metrics } = await supabase.from('health_metrics').select('*').order('created_at', { ascending: false }).limit(20);
+      const { data: workouts } = await supabase.from('workouts').select('*').order('workout_date', { ascending: false }).limit(20);
       
-      if (!metrics || metrics.length === 0) return;
+      if (!metrics || metrics.length === 0) {
+        setChartData([]);
+        setMetricHistory([]);
+        return;
+      }
 
-      const formatted = metrics.reverse().map((m: any, i: number) => {
-        const w = workouts ? workouts[i] : null;
-        // Simular performance baseada no RPE do treino ou carga
-        const perf = w ? (100 - (w.rpe || 7) * 2) : (90 + Math.random() * 10);
-        return {
-          session: `S${i+1}`,
-          pain: Math.max(m.shoulder, m.elbow, m.wrist),
-          performance: Math.round(perf)
-        };
+      setMetricHistory(metrics);
+
+      // Agrupar por data para o gráfico (pegar a pior dor do dia se houver múltiplos)
+      const dailyMap: Record<string, { pain: number, performance: number }> = {};
+      
+      metrics.forEach((m: any) => {
+        const date = new Date(m.created_at).toLocaleDateString("pt-BR").slice(0, 5);
+        const painValue = Math.max(m.shoulder, m.elbow, m.wrist);
+        
+        if (!dailyMap[date] || dailyMap[date].pain < painValue) {
+          dailyMap[date] = { pain: painValue, performance: 0 };
+        }
       });
+
+      // Mapear performance dos treinos (também por data)
+      if (workouts) {
+        workouts.forEach(w => {
+          const date = new Date(w.workout_date).toLocaleDateString("pt-BR").slice(0, 5);
+          if (dailyMap[date]) {
+            dailyMap[date].performance = Math.round(100 - (w.rpe || 7) * 2);
+          }
+        });
+      }
+
+      const formatted = Object.entries(dailyMap).map(([date, vals], i) => ({
+        session: date,
+        pain: vals.pain,
+        performance: vals.performance || (90 + Math.random() * 5) // Fallback simulado se não houver treino no dia
+      })).slice(-7); // Mostrar últimos 7 dias no gráfico
+
       setChartData(formatted);
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
+  async function deleteHealthMetric(id: string) {
+    if (!confirm("Excluir este registro de saúde?")) return;
+    try {
+      const { error } = await supabase.from('health_metrics').delete().eq('id', id);
+      if (error) throw error;
+      fetchCorrelationData();
+    } catch (e: any) {
+      alert("Erro ao deletar: " + e.message);
     }
   }
 
@@ -151,6 +201,7 @@ export default function Health() {
     try {
       setSaved(false);
       const { error } = await supabase.from('health_metrics').insert({
+        id: generateId(),
         shoulder: health.shoulder,
         elbow: health.elbow,
         wrist: health.wrist,
@@ -270,6 +321,7 @@ export default function Health() {
   async function addWeek() {
     try {
       const { error } = await supabase.from('hormone_weeks').insert({
+        id: generateId(),
         label: `Semana ${hormonalWeeks.length + 1}`
       });
       if (error) throw error;
@@ -301,6 +353,7 @@ export default function Health() {
     if (!source) return;
     try {
       const { data: newW, error } = await supabase.from('hormone_weeks').insert({
+        id: generateId(),
         label: `${source.label} (cópia)`
       }).select().single();
       if (error) throw error;
@@ -426,7 +479,63 @@ export default function Health() {
 
           <div className="mx-4 bg-[#F5B700]/10 border border-[#F5B700]/30 rounded-xl p-4">
             <p className="text-[#F5B700] font-bold text-sm mb-1">Insight Automático</p>
-            <p className="text-gray-200 text-sm">Quando a dor no cotovelo ultrapassou 4, seu rendimento caiu 7%. Fortaleça os extensores e mantenha o cotovelo aquecido antes do supino.</p>
+            <p className="text-gray-200 text-sm">
+              {chartData.length >= 3 
+                ? (() => {
+                    const highPain = chartData.filter(d => d.pain >= 5);
+                    if (highPain.length > 0) {
+                      const avgPerf = highPain.reduce((acc, curr) => acc + curr.performance, 0) / highPain.length;
+                      return `Detectamos que quando sua dor atinge o nível 5 ou superior, sua performance média cai para ${avgPerf.toFixed(0)}%. Sugerimos reforçar o aquecimento articular.`;
+                    }
+                    return "Sua correlação dor vs performance está estável. Mantenha os treinos conforme planejado e escute seu corpo.";
+                  })()
+                : "Aguardando mais dados (mínimo 3 sessões) para gerar análise estratégica de performance."}
+            </p>
+          </div>
+
+          {/* History Management */}
+          <div className="mx-4">
+            <h3 className="text-[#F5B700] font-bold text-sm uppercase tracking-wider mb-2">Registros Recentes</h3>
+            <div className="card-dark border border-[#2A2A2A] overflow-hidden">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-[#2A2A2A]">
+                    <th className="text-gray-400 text-left p-3">Data</th>
+                    <th className="text-gray-400 text-center p-3">Dor Máx</th>
+                    <th className="text-gray-400 text-center p-3">Fadiga</th>
+                    <th className="p-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {metricHistory.slice(0, 10).map((m) => (
+                    <tr key={m.id} className="border-b border-[#1A1A1A] hover:bg-[#2A2A2A] transition-colors">
+                      <td className="p-3 text-gray-300">
+                        {new Date(m.created_at).toLocaleDateString("pt-BR")}
+                      </td>
+                      <td className="p-3 text-center text-white font-bold">
+                        {Math.max(m.shoulder, m.elbow, m.wrist)}/10
+                      </td>
+                      <td className="p-3 text-center text-gray-300">
+                        {m.fatigue}/10
+                      </td>
+                      <td className="p-3 text-right">
+                        <button 
+                          className="p-1 px-2 rounded bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white"
+                          onClick={() => deleteHealthMetric(m.id)}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {metricHistory.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center text-gray-500 italic">Nenhum registro encontrado.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
@@ -484,7 +593,10 @@ export default function Health() {
               ⚕️ Consulte sempre seu médico esportivo antes de ajustar o protocolo. Os cálculos são automáticos: mg/semana = concentração × dose × frequência.
             </p>
           </div>
-          {/* TODO: Futuramente integrar com Supabase para sincronização em nuvem */}
+          
+          <div className="mx-4 pb-4">
+            <HormoneSpecialistChat profile={profile} />
+          </div>
         </>
       )}
 

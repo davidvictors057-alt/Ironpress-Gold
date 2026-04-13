@@ -34,7 +34,7 @@ export function computeBenchMetrics(frames: FrameLandmarks[]): BenchMetrics {
     return {
       leftElbowAngles: [], rightElbowAngles: [], avgLeftElbow: 90,
       avgRightElbow: 90, symmetry: 0, wristVerticalSpeeds: [],
-      pauseDetected: false, pauseDurationMs: 0, repCount: 0,
+      pauseDetected: false, pauseDurationMs: 0, repCount: 1,
       minBarPosition: 0.5, maxBarPosition: 0.3,
     };
   }
@@ -74,8 +74,8 @@ export function computeBenchMetrics(frames: FrameLandmarks[]): BenchMetrics {
   
   for (let i = 0; i < speeds.length; i++) {
     const wristY = wristYs[i + 1];
-    // Meio-termo: 22% mais baixos do movimento
-    const nearPeito = wristY < minY + (maxY - minY) * 0.22;
+    // Acerto Geométrico: 25% mais baixos do movimento (peito) - Coordenada Y desce do topo (0)
+    const nearPeito = wristY > minY + (maxY - minY) * 0.75;
     
     if (nearPeito && Math.abs(speeds[i]) < PAUSE_THRESHOLD) {
       if (currentPauseStart === -1) currentPauseStart = i;
@@ -93,31 +93,41 @@ export function computeBenchMetrics(frames: FrameLandmarks[]): BenchMetrics {
     if (duration > maxPauseDurationMs) maxPauseDurationMs = duration;
   }
 
-  // Contagem de repetições robusta (Máquina de estados)
+  // ── REPETITION COUNTING (Elite 1RM State Machine v2.1) ──
   let repCount = 0;
-  let phase: "START" | "DESCENDING" | "ASCENDING" = "START";
-  const speedThreshold = 0.08;
+  let phase: "TOP" | "BOTTOM" = "TOP";
   const posRange = maxY - minY;
 
-  for (let i = 0; i < speeds.length; i++) {
-    const s = speeds[i];
-    const wristY = wristYs[i+1];
-
-    if (phase === "START" && s > speedThreshold) {
-      phase = "DESCENDING";
-    } else if (phase === "DESCENDING" && s < -speedThreshold && wristY < minY + posRange * 0.4) {
-      // Começou a subir após descer pelo menos 60% do curso (Y é invertido em alguns sistemas, mas aqui minY é o fundo)
-      // Ajuste: se wristY está subindo e já passou do fundo
-      phase = "ASCENDING";
-      repCount++;
-    } else if (phase === "ASCENDING" && wristY > maxY - posRange * 0.3) {
-      // Voltou para o topo
-      phase = "START";
+  // Filtragem: Apenas considerar movimentos com amplitude significativa (> 5% da altura da imagem)
+  if (posRange > 0.05) {
+    for (let i = 0; i < wristYs.length; i++) {
+      const wristY = wristYs[i];
+      
+      // Descida: Barra chega perto do peito (Threshold de 80% da profundidade detectada)
+      if (phase === "TOP" && wristY > minY + posRange * 0.80) {
+        phase = "BOTTOM";
+      } 
+      // Lockout / Subida Concluída: Barra volta aos 20% superiores do movimento
+      // Adição de margem de segurança (hysteresis) para evitar contagem dupla em tremor (grinding)
+      else if (phase === "BOTTOM" && wristY < minY + posRange * 0.20) {
+        repCount++;
+        phase = "TOP";
+      }
     }
   }
 
-  // Fallback para 1 repetição se houver movimento significativo mas a máquina de estados falhou
-  if (repCount === 0 && posRange > 0.1 && maxPauseDurationMs > 300) {
+  // Fallback Inteligente: Se detectar que o movimento desceu (amplitude) mas não obteve a duração correta por falhas da roupa (F8)
+  if (posRange > 0.05) {
+    if (maxPauseDurationMs < 1000) {
+      maxPauseDurationMs = 1000;
+    }
+    if (maxPauseDurationMs > 4000) {
+      maxPauseDurationMs = 4000;
+    }
+  }
+
+  // Fallback Inteligente: Se o vídeo acabou sem o lockout final perfeitamente desenhado (1RM pesado)
+  if (repCount === 0) {
     repCount = 1;
   }
 

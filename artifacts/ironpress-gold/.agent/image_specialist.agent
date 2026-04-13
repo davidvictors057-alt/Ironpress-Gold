@@ -1,0 +1,5 @@
+# IMAGE SPECIALIST - IRONSIDE VISION CORE
+# Focus: CV Analysis & Frame Processing
+## RULES
+1. Handle motion tracking and landmark extraction.
+2. Velocity and joint angle calculation.

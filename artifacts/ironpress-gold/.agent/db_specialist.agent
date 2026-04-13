@@ -1,0 +1,12 @@
+# DATABASE SPECIALIST - IRONSIDE DATA CORE
+# Focus: Supabase Optimization & Real-time Sync
+
+## DOMAIN
+- PostgreSQL / Supabase Schema.
+- RLS (Row Level Security) Policies.
+- Real-time Subscriptions for Training Live Data.
+
+## RULES
+1. **Consistency**: Ensure all training metrics are indexed and queryable in < 100ms.
+2. **Integrity**: Validate FK relationships between Athletes, Coachers, and Videos.
+3. **Backup**: Plan for data export and athlete history persistence.

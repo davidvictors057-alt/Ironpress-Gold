@@ -1,10 +1,12 @@
-import { useState, useRef } from "react";
-import { Activity, X, Info, AlertTriangle, CheckCircle, Clock, Brain } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Activity, X, AlertTriangle, CheckCircle, Clock, Brain, FileText, BarChart3, Video, Microscope, Share2 } from "lucide-react";
 import { supabase } from "../lib/supabase";
-import { sampleVideoFrames } from "../services/biomech/videoSampler";
+import { sampleVideoFrames, LANDMARK_IDX } from "../services/biomech/videoSampler";
 import { computeBenchMetrics } from "../services/biomech/benchMetrics";
 import { buildReport, BiomechReport } from "../services/biomech/reportBuilder";
-import { getCoachIAFeedback, listAvailableModels } from "../services/coachAI/aiCoachService";
+import { getCoachIAFeedback } from "../services/coachAI/aiCoachService";
+import { A2ARichReport } from "./A2ARichReport";
+import { copyToClipboard, cleanTextForSharing, openWhatsApp } from "../lib/utils";
 
 interface Props {
   videoId: string;
@@ -12,109 +14,294 @@ interface Props {
   onClose: () => void;
 }
 
-export default function BiomechAnalysisOverlay({ videoId, videoTitle, onClose }: Props) {
+export default function BiomechAnalysisOverlay({ videoId, videoTitle, profile, onClose }: Props & { profile: any }) {
   const [stage, setStage] = useState<"idle" | "loading-model" | "processing" | "done" | "error">("idle");
+  const [activeTab, setActiveTab] = useState<"visual" | "critical" | "biometric">("visual");
   const [progress, setProgress] = useState(0);
   const [report, setReport] = useState<BiomechReport | null>(null);
   const [aiFeedback, setAiFeedback] = useState("");
-  const [customApiKey, setCustomApiKey] = useState(localStorage.getItem('gemini_api_key') || "");
-  const [customModelId, setCustomModelId] = useState(localStorage.getItem('gemini_model_id') || "gemini-1.5-flash-latest");
-  const [diagnosedModels, setDiagnosedModels] = useState<string[]>([]);
-  const [isDiagnosing, setIsDiagnosing] = useState(false);
-  const [pastReports, setPastReports] = useState<{ id: string; score: number; created_at: string }[]>([]);
+  const [analyzedFrames, setAnalyzedFrames] = useState<any[]>([]);
+  const [pastReports, setPastReports] = useState<{ id: string; score: number; report_summary: string; created_at: string }[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
+  const [isExecutingProtocol, setIsExecutingProtocol] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [showKeyConfig, setShowKeyConfig] = useState(!customApiKey);
+  const [showOverlay, setShowOverlay] = useState(true);
+  const [existingVideoPath, setExistingVideoPath] = useState<string | null>(null);
+  const [isCloudLoading, setIsCloudLoading] = useState(false);
+  const [lastUrl, setLastUrl] = useState("");
+  const [statusIdx, setStatusIdx] = useState(0);
+
+  const biomechThinkingMessages = [
+    "Engenheiro Biomecânico calculando braços de alavanca...",
+    "Especialista analisando vetores de torção articular...",
+    "Mapeando pontos críticos de torque na fase concêntrica...",
+    "Sincronizando modelos GPC para validação de elite...",
+    "Validando simetria cinemática via rede neural..."
+  ];
+
+  useEffect(() => {
+    let interval: any;
+    if (stage === "loading-model" || stage === "processing") {
+      interval = setInterval(() => {
+        setStatusIdx(prev => (prev + 1) % biomechThinkingMessages.length);
+      }, 2000);
+    } else {
+      setStatusIdx(0);
+    }
+    return () => clearInterval(interval);
+  }, [stage]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dimensionsRef = useRef({ width: 0, height: 0 });
 
-  function saveKey(key: string, model: string) {
-    setCustomApiKey(key);
-    setCustomModelId(model);
-    localStorage.setItem('gemini_api_key', key);
-    localStorage.setItem('gemini_model_id', model);
-    setShowKeyConfig(false);
+  useEffect(() => {
+    if (videoId) loadVideoFromCloud();
+  }, [videoId]);
+
+  async function loadVideoFromCloud() {
+    setIsCloudLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('videos')
+        .select('storage_path, modality')
+        .eq('id', videoId)
+        .single();
+      if (error) throw error;
+      if (data?.storage_path) {
+        setExistingVideoPath(data.storage_path);
+        localStorage.setItem(`v_modality_${videoId}`, data.modality); // Cache temporário
+        const { data: urlData } = supabase.storage.from('videos').getPublicUrl(data.storage_path);
+        if (urlData?.publicUrl && videoRef.current) {
+          videoRef.current.src = urlData.publicUrl;
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao carregar vídeo da nuvem:", err);
+    } finally {
+      setIsCloudLoading(false);
+    }
   }
 
   async function loadHistory() {
-    const { data, error } = await supabase
-      .from('analyses')
-      .select('id, score, created_at')
-      .eq('video_id', videoId)
-      .order('created_at', { ascending: false });
-
-    if (!error && data) {
-      setPastReports(data.map(r => ({ id: r.id, score: r.score, created_at: r.created_at })));
+    try {
+      const { data, error } = await supabase
+        .from('analyses')
+        .select('id, score, report_summary, created_at')
+        .eq('video_id', videoId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setPastReports(data || []);
+      setShowHistory(true);
+    } catch (err) {
+      console.error(err);
     }
-    setShowHistory(true);
   }
 
-  async function startAnalysis(file: File) {
-    if (!videoRef.current) return;
-    const url = URL.createObjectURL(file);
-    videoRef.current.src = url;
+  async function deleteAnalysis(id: string) {
+    if (!confirm("Remover este diagnóstico do histórico?")) return;
+    try {
+      const { error } = await supabase.from('analyses').delete().eq('id', id);
+      if (error) throw error;
+      setPastReports(prev => prev.filter(r => r.id !== id));
+    } catch (err) {
+      alert("Erro ao remover registro.");
+    }
+  }
 
+  useEffect(() => {
+    let animationId: number;
+    const loop = () => {
+      if (videoRef.current && canvasRef.current && showOverlay) {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          const vw = video.videoWidth || video.clientWidth;
+          const vh = video.videoHeight || video.clientHeight;
+          if (vw !== dimensionsRef.current.width || vh !== dimensionsRef.current.height) {
+            if (vw > 0 && vh > 0) {
+              canvas.width = vw;
+              canvas.height = vh;
+              dimensionsRef.current = { width: vw, height: vh };
+            }
+          }
+          if (stage === "done" && analyzedFrames.length > 0) {
+            const currentTimeMs = video.currentTime * 1000;
+            const closest = findClosestFrame(analyzedFrames, currentTimeMs);
+            if (closest) drawLandmarks(closest, ctx, canvas);
+          } else if (stage !== "processing") {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+        }
+      } else if (canvasRef.current && !showOverlay) {
+        const ctx = canvasRef.current.getContext("2d");
+        ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+      animationId = requestAnimationFrame(loop);
+    };
+    animationId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animationId);
+  }, [stage, analyzedFrames, showOverlay]);
+
+  function findClosestFrame(frames: any[], timeMs: number) {
+    if (!frames.length) return null;
+    let low = 0, high = frames.length - 1;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (frames[mid].timestampMs < timeMs) low = mid + 1;
+      else high = mid;
+    }
+    return frames[low];
+  }
+
+  function drawLandmarks(data: any, ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
+    if (!data) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const getPoint = (idx: number, key: string) => {
+      if (data[idx]) return data[idx];
+      if (data[key]) return { ...data[key], visibility: 1 };
+      return null;
+    };
+    const pShL = getPoint(LANDMARK_IDX.LEFT_SHOULDER, "leftShoulder");
+    const pShR = getPoint(LANDMARK_IDX.RIGHT_SHOULDER, "rightShoulder");
+    const pElL = getPoint(LANDMARK_IDX.LEFT_ELBOW, "leftElbow");
+    const pElR = getPoint(LANDMARK_IDX.RIGHT_ELBOW, "rightElbow");
+    const pWrL = getPoint(LANDMARK_IDX.LEFT_WRIST, "leftWrist");
+    const pWrR = getPoint(LANDMARK_IDX.RIGHT_WRIST, "rightWrist");
+    const points = [pShL, pShR, pElL, pElR, pWrL, pWrR];
+    const connections = [[pShL, pElL], [pElL, pWrL], [pShR, pElR], [pElR, pWrR], [pShL, pShR]];
+    ctx.strokeStyle = "#F5B700";
+    ctx.lineWidth = 4;
+    ctx.lineCap = "round";
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = "rgba(245, 183, 0, 0.5)";
+    connections.forEach(([p1, p2]) => {
+      if (p1 && p2 && (p1.visibility ?? 1) > 0.5 && (p2.visibility ?? 1) > 0.5) {
+        ctx.beginPath();
+        ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
+        ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
+        ctx.stroke();
+      }
+    });
+    points.forEach(p => {
+      if (p && (p.visibility ?? 1) > 0.5) {
+        ctx.fillStyle = "#FFFFFF";
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.arc(p.x * canvas.width, p.y * canvas.height, 5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.strokeStyle = "#F5B700";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    });
+  }
+
+  async function executeAnalysisProtocol(url: string) {
+    if (!videoRef.current || !url) return;
+    setLastUrl(url);
+    videoRef.current.src = url;
     setStage("loading-model");
     setProgress(5);
-
     try {
-      await new Promise<void>((resolve, reject) => {
-        videoRef.current!.onloadedmetadata = () => resolve();
-        videoRef.current!.onerror = () => reject(new Error("Erro ao carregar vídeo"));
-      });
-
-      setStage("processing");
+      if (videoRef.current.readyState < 3) {
+        await new Promise<void>((resolve, reject) => {
+          const onCanPlay = () => { videoRef.current?.removeEventListener('canplay', onCanPlay); resolve(); };
+          videoRef.current!.addEventListener('canplay', onCanPlay);
+          videoRef.current!.onerror = () => reject(new Error("Erro ao carregar fluxo cinematográfico"));
+          setTimeout(() => { videoRef.current?.removeEventListener('canplay', onCanPlay); resolve(); }, 5000);
+        });
+      }
+      const realModality = localStorage.getItem(`v_modality_${videoId}`) || "RAW";
+      const sampleRate = realModality === "F8" ? 1 : 3;
 
       const frames = await sampleVideoFrames(
         videoRef.current,
         (pct) => setProgress(10 + pct * 0.80),
-        5
+        sampleRate,
+        (pose) => {
+          const canvas = canvasRef.current;
+          const ctx = canvas?.getContext("2d");
+          if (canvas && ctx) drawLandmarks(pose, ctx, canvas);
+        }
       );
-
       setProgress(92);
+      setAnalyzedFrames(frames);
       const metrics = computeBenchMetrics(frames);
       const result = buildReport(metrics, frames.length);
       setReport(result);
-
       setProgress(95);
-      // Chamada real da IA (Gemini stable)
+      
       let aiResponseText = "";
       try {
-        aiResponseText = await getCoachIAFeedback(metrics, videoTitle, "EQUIPADO F8", customApiKey, customModelId);
-      } catch (aiErr) {
-        console.error("AI Error ignored for metrics display:", aiErr);
-        aiResponseText = "⚠️ Não foi possível gerar o feedback da IA agora. As métricas técnicas estão disponíveis abaixo.";
+        aiResponseText = await getCoachIAFeedback(metrics, videoTitle, profile, realModality);
+      } catch {
+        aiResponseText = "⚠️ Hub IA offline: Métricas brutas disponíveis.";
       }
       setAiFeedback(aiResponseText);
-
-      const { error: dbError } = await supabase
-        .from('analyses')
-        .insert({
-          video_id: videoId,
-          title: videoTitle,
-          score: result.score,
-          flags: result.flags,
-          report_summary: aiResponseText || result.summary,
-          key_angles: {
-            leftElbow: result.metrics.avgLeftElbow,
-            rightElbow: result.metrics.avgRightElbow,
-            symmetry: result.metrics.symmetry,
-            pauseDetected: result.metrics.pauseDetected,
-          },
-          frames_analyzed: frames.length,
-        });
-
-      if (dbError) throw dbError;
-
+      await supabase.from('analyses').insert({
+        video_id: videoId,
+        title: videoTitle,
+        score: result.score,
+        flags: result.flags,
+        report_summary: aiResponseText || result.summary,
+        key_angles: {
+          leftElbow: result.metrics.avgLeftElbow,
+          rightElbow: result.metrics.avgRightElbow,
+          symmetry: result.metrics.symmetry,
+          pauseDetected: result.metrics.pauseDetected,
+        },
+        frames_analyzed: frames.length,
+      });
       setProgress(100);
       setStage("done");
     } catch (err) {
       console.error(err);
-      setErrorMsg(err instanceof Error ? err.message : "Erro desconhecido");
+      setErrorMsg(err instanceof Error ? err.message : "Protocol Error");
       setStage("error");
-    } finally {
-      URL.revokeObjectURL(url);
     }
+  }
+
+  async function refetchAIFeedback() {
+    if (!report) return;
+    setAiFeedback("🧠 Sincronizando novo laudo inteligente...");
+    const realModality = localStorage.getItem(`v_modality_${videoId}`) || "RAW";
+    try {
+      const aiResponseText = await getCoachIAFeedback(report.metrics, videoTitle, profile);
+      setAiFeedback(aiResponseText);
+      
+      await supabase.from('analyses').insert({
+        video_id: videoId,
+        title: videoTitle,
+        score: report.score,
+        flags: report.flags,
+        report_summary: aiResponseText,
+        key_angles: {
+          leftElbow: report.metrics.avgLeftElbow,
+          rightElbow: report.metrics.avgRightElbow,
+          symmetry: report.metrics.symmetry,
+          pauseDetected: report.metrics.pauseDetected,
+        },
+        frames_analyzed: analyzedFrames.length,
+      });
+    } catch {
+      setAiFeedback("⚠️ Falha ao reconectar com AI Hub. Mantenha o modelo anterior ativo.");
+    }
+  }
+
+  async function startAnalysis(file: File) {
+    executeAnalysisProtocol(URL.createObjectURL(file));
+  }
+
+  async function startAnalysisFromCloud() {
+    if (!existingVideoPath || !videoRef.current) return;
+    const { data: urlData } = supabase.storage.from('videos').getPublicUrl(existingVideoPath);
+    if (!urlData?.publicUrl) return;
+    setIsExecutingProtocol(true);
+    try { await executeAnalysisProtocol(urlData.publicUrl); }
+    finally { setIsExecutingProtocol(false); }
   }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -122,294 +309,472 @@ export default function BiomechAnalysisOverlay({ videoId, videoTitle, onClose }:
     if (file) startAnalysis(file);
   }
 
-  const scoreColor = !report ? "#F5B700" : report.score >= 85 ? "#4ade80" : report.score >= 65 ? "#F5B700" : "#ef4444";
+  function resetAnalysis() {
+    setStage("idle");
+    setReport(null);
+    setAnalyzedFrames([]);
+    setAiFeedback("");
+    setProgress(0);
+  }
 
+  const shareReport = async () => {
+    if (!report) return;
+    
+    const shareText = `*LAUDO BIOMECÂNICO IRONSIDE ELITE* 🧪
+*Vídeo*: ${videoTitle}
+*Score de Eficiência*: ${report.score} PTS
+*Angulação*: Lado Eq (${report.metrics.avgLeftElbow.toFixed(1)}°) | Lado Dir (${report.metrics.avgRightElbow.toFixed(1)}°)
+*Repetições*: ${report.metrics.repCount} REP
+*Pausa no Peito*: ${report.metrics.pauseDetected ? "SIM" : "NÃO"}
+*Equipe A2A*: ${aiFeedback.includes("Claude") ? "Claude Opus + Gemini 3.1" : "Gemini 3.1 Pro"}
+
+*🧠 FEEDBACK DO TREINADOR IA:*
+${aiFeedback.split('---')[0].trim().replace(/<br\s*\/?>/gi, '\n')}
+
+_Laboratório de Biomecânica Ironside_ ⚡`;
+
+    const cleanedText = cleanTextForSharing(shareText);
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Ironside: ${videoTitle}`,
+          text: cleanedText
+        });
+      } catch (err) {
+        openWhatsApp(cleanedText);
+      }
+    } else {
+      openWhatsApp(cleanedText);
+    }
+  };
+
+  // A2ARichReport agora substitui a formatação manual para manter o padrão Premium
+
+  const getProcessingText = (prog: number) => {
+    if (stage === "loading-model") return "Sincronizando Rede Neural";
+    if (prog < 25) return "Capturando Cinemática";
+    if (prog < 50) return "Processando Bioengenharia";
+    if (prog < 75) return "Mapeando Assimetrias";
+    if (prog < 95) return "Filtrando Laudo Biomecânico";
+    return "Analisando Técnica de Elite";
+  };
+
+  // ─── TABS CONFIG ───────────────────────────────────────────────────────────
+  const tabs = [
+    { id: "visual", label: "Lab Visual", icon: Video },
+    { id: "critical", label: "Análise Crítica", icon: Brain },
+    { id: "biometric", label: "Biometria", icon: BarChart3 },
+  ] as const;
+
+  // ─── RENDER ────────────────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 bg-black/95 flex flex-col z-50">
-      {/* Hidden video element for processing */}
-      <video ref={videoRef} className="hidden" playsInline muted crossOrigin="anonymous" />
+    <div className="fixed inset-0 bg-black z-[60] flex flex-col" style={{ fontFamily: "'Inter', sans-serif" }}>
+      <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleFileSelect} />
 
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-[#2A2A2A]">
-        <div className="flex items-center gap-2">
-          <Activity className="text-[#F5B700]" size={20} />
-          <span className="text-white font-bold text-sm">Análise Biomecânica</span>
+      {/* ── TOP BAR ── */}
+      <div className="flex-shrink-0 border-b border-white/10 bg-[#080808]">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Microscope className="text-[#F5B700]" size={18} />
+            <span className="text-white font-black text-xs uppercase tracking-widest">
+              Lab Biomecânica <span className="text-[#F5B700]">Elite</span>
+            </span>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-red-500/20 transition-colors group">
+            <X size={20} className="text-gray-400 group-hover:text-red-400" />
+          </button>
         </div>
-        <button onClick={onClose} data-testid="button-close-biomech">
-          <X size={24} className="text-gray-400" />
-        </button>
+
+        {/* ── STATUS BAR ── */}
+        <div className="flex items-center justify-between px-4 pb-2">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-[#F5B700] animate-pulse" />
+            <span className="text-gray-500 text-[9px] uppercase font-bold tracking-widest">
+              Protocolo Cinemático: <span className="text-white">A.I. ACTIVE {(localStorage.getItem(`v_modality_${videoId}`) === "F8") ? "(F8 HIGH DENSITY)" : ""}</span>
+            </span>
+          </div>
+          <span className="text-[#F5B700] text-[9px] font-mono font-bold">VER_G1.5_ELITE</span>
+        </div>
+
+        {/* ── TABS (only when done) ── */}
+        {stage === "done" && (
+          <div className="flex px-4 gap-1 overflow-x-auto no-scrollbar">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1.5 py-2.5 px-3 border-b-2 transition-all text-[9px] font-bold uppercase tracking-widest whitespace-nowrap ${
+                  activeTab === tab.id ? "border-[#F5B700] text-[#F5B700]" : "border-transparent text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                <tab.icon size={12} />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Warning */}
-        <div className="bg-[#1A1A1A] border border-[#F5B700]/20 rounded-xl p-3 flex items-start gap-2">
-          <Info size={16} className="text-[#F5B700] flex-shrink-0 mt-0.5" />
-          <p className="text-gray-400 text-xs">
-            <span className="text-[#F5B700] font-semibold">Análise estimada</span> – posicione a câmera <strong>lateral</strong> ou <strong>45°</strong> para melhor precisão. Resultados são orientativos, não substitutos de avaliação presencial.
-          </p>
+      {/* ── SCROLLABLE CONTENT ── */}
+      <div className="flex-1 overflow-y-auto">
+
+        {/* ── ALWAYS MOUNTED VIDEO PLAYER ── */}
+        <div 
+          className={`relative w-full bg-[#050505] ${
+            (stage === "loading-model" || stage === "processing" || (stage === "done" && activeTab === "visual")) 
+              ? "block" : "hidden"
+          }`}
+          style={{ height: stage === "done" ? "180px" : "200px", maxHeight: stage === "done" ? "180px" : "200px" }}
+        >
+          <video ref={videoRef} className="w-full h-full object-contain" playsInline muted crossOrigin="anonymous" disablePictureInPicture />
+          <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none w-full h-full object-contain" />
+          
+          {(stage === "loading-model" || stage === "processing") && (
+            <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded text-[8px] text-[#F5B700] font-black uppercase tracking-widest">
+              Live Kinematics · <span className="text-red-400 animate-pulse">●</span> Analyzing
+            </div>
+          )}
+
+          {stage === "done" && (
+            <div className="absolute bottom-2 left-2 flex gap-1.5">
+              <button
+                onClick={() => videoRef.current?.paused ? videoRef.current.play() : videoRef.current?.pause()}
+                className="bg-black/70 hover:bg-[#F5B700] hover:text-black p-1.5 rounded text-white transition-all border border-white/10"
+              >
+                <Activity size={14} />
+              </button>
+              <button
+                onClick={() => setShowOverlay(!showOverlay)}
+                className={`p-1.5 rounded transition-all border border-white/10 ${showOverlay ? "bg-[#F5B700] text-black" : "bg-black/70 text-white"}`}
+              >
+                <Brain size={14} />
+              </button>
+            </div>
+          )}
         </div>
 
+        {/* ── IDLE STATE ── */}
         {stage === "idle" && (
-          <div className="space-y-4">
-            {/* Key Config */}
-            {showKeyConfig ? (
-              <div className="bg-[#1A1A1A] border border-[#F5B700]/30 rounded-xl p-4 space-y-3">
-                <div className="flex items-center gap-2 text-[#F5B700] mb-1">
-                  <Brain size={18} />
-                  <span className="font-bold text-xs uppercase tracking-wider">Configurar IA Gemini</span>
+          <div className="p-4 max-w-lg mx-auto space-y-4 py-8">
+            {isCloudLoading ? (
+              <div className="text-center p-12 text-[#F5B700] animate-pulse font-black uppercase tracking-widest text-xs">
+                Carregando Stream...
+              </div>
+            ) : existingVideoPath ? (
+              <div className="border border-[#F5B700]/30 rounded-2xl p-6 bg-gradient-to-b from-[#111] to-black text-center space-y-4">
+                <div className="w-16 h-16 bg-[#F5B700] rounded-full flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(245,183,0,0.3)] animate-pulse">
+                  <Activity className="text-black" size={32} />
                 </div>
-                <p className="text-gray-400 text-[10px]">Para feedback real, insira sua chave do Google AI Studio:</p>
-                <input
-                  type="password"
-                  placeholder="Colar chave secreta aqui..."
-                  className="w-full bg-black border border-[#2A2A2A] rounded-lg px-3 py-2 text-white text-xs"
-                  defaultValue={customApiKey}
-                  onChange={(e) => setCustomApiKey(e.target.value)}
-                />
-                <input
-                  type="text"
-                  placeholder="Modelo (ex: gemini-1.5-flash)"
-                  className="w-full bg-black border border-[#2A2A2A] rounded-lg px-3 py-2 text-white text-xs"
-                  defaultValue={customModelId}
-                  onChange={(e) => setCustomModelId(e.target.value)}
-                />
-                <button
-                  className="btn-gold w-full py-2 text-xs font-bold"
-                  onClick={() => saveKey(customApiKey, customModelId)}
-                >
-                  Salvar Configuração
-                </button>
-
-                <div className="mt-4 pt-4 border-t border-[#2A2A2A]">
-                  <p className="text-[10px] text-gray-400 mb-2 italic">Dúvida no modelo? O diagnóstico lista o que está ativo na sua chave:</p>
+                <h3 className="text-white text-lg font-black uppercase tracking-tight">Protocolo de Nuvem</h3>
+                <p className="text-gray-400 text-xs leading-relaxed">Vídeo detectado na sua galeria. Iniciar análise?</p>
+                <div className="flex flex-col gap-2">
                   <button
-                    className="w-full bg-[#1A1A1A] hover:bg-[#252525] text-gray-300 py-1.5 rounded text-[10px] border border-[#333] transition-colors"
-                    onClick={async () => {
-                      setIsDiagnosing(true);
-                      const models = await listAvailableModels(customApiKey);
-                      setDiagnosedModels(models);
-                      setIsDiagnosing(false);
-                    }}
-                    disabled={isDiagnosing}
+                    disabled={isExecutingProtocol}
+                    onClick={startAnalysisFromCloud}
+                    className="w-full bg-[#F5B700] text-black py-3 rounded-xl font-black text-xs uppercase tracking-widest shadow-xl hover:scale-[1.02] flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
                   >
-                    {isDiagnosing ? "Consultando Google..." : "🔍 Listar Modelos Disponíveis"}
+                    {isExecutingProtocol ? <><Clock className="animate-spin" size={14} /> Processando...</> : "Executar Protocolo Técnico"}
                   </button>
-                  
-                  {diagnosedModels.length > 0 && (
-                    <div className="mt-2 bg-black/50 p-2 rounded border border-[#222] max-h-32 overflow-y-auto">
-                      <p className="text-[9px] text-gold font-bold mb-1 uppercase tracking-tighter">Modelos Encontrados:</p>
-                      <div className="flex flex-wrap gap-1">
-                        {diagnosedModels.map(m => (
-                          <button
-                            key={m}
-                            className="text-[9px] bg-[#2A2A2A] hover:bg-gold hover:text-black px-1.5 py-0.5 rounded transition-all cursor-pointer"
-                            onClick={() => setCustomModelId(m)}
-                            title="Clique para selecionar"
-                          >
-                            {m}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full bg-white/5 text-gray-400 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-white/10 transition-colors border border-white/5"
+                  >
+                    Usar Arquivo Local
+                  </button>
                 </div>
               </div>
             ) : (
-              <div className="flex justify-center">
-                <button
-                  onClick={() => setShowKeyConfig(true)}
-                  className="text-[#F5B700] text-[10px] underline opacity-60 hover:opacity-100"
-                >
-                  Trocar Chave de API IA
-                </button>
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-[#F5B700]/20 rounded-2xl p-12 cursor-pointer hover:border-[#F5B700]/50 hover:bg-[#F5B700]/5 transition-all text-center"
+              >
+                <div className="w-16 h-16 bg-black border border-[#F5B700]/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Microscope className="text-[#F5B700]" size={28} />
+                </div>
+                <h3 className="text-white text-lg font-black uppercase mb-2">Novo Diagnóstico</h3>
+                <p className="text-gray-500 text-xs mb-6 leading-relaxed">Solte sua gravação para análise de força e simetria.</p>
+                <div className="inline-flex items-center gap-2 bg-[#F5B700] text-black px-5 py-2.5 rounded-full font-black text-xs uppercase tracking-widest shadow-xl">
+                  <Video size={14} /> Enviar Vídeo
+                </div>
               </div>
             )}
-
-            <p className="text-white text-sm text-center">Selecione o vídeo do dispositivo para analisar</p>
             <button
-              className="btn-gold w-full py-4 flex items-center justify-center gap-2 font-black text-sm"
-              onClick={() => fileInputRef.current?.click()}
-              data-testid="button-select-video-analyze"
-            >
-              <Activity size={20} />
-              Selecionar Vídeo e Analisar
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-            <button
-              className="btn-gold-outline w-full py-2.5 text-sm"
               onClick={loadHistory}
-              data-testid="button-show-history"
+              className="w-full bg-white/5 text-gray-500 py-2.5 rounded-xl text-[9px] font-bold uppercase tracking-widest hover:text-[#F5B700] transition-colors border border-white/5"
             >
-              Ver Análises Anteriores
+              Consultar Histórico
             </button>
           </div>
         )}
 
+        {/* ── PROCESSING STATE ── */}
         {(stage === "loading-model" || stage === "processing") && (
-          <div className="space-y-4 text-center py-4">
-            <div className="w-24 h-24 rounded-full border-4 border-[#F5B700]/20 border-t-[#F5B700] animate-spin mx-auto" />
-            <p className="text-[#F5B700] font-bold">
-              {stage === "loading-model" ? "Carregando modelo de IA..." : "Processando frames..."}
-            </p>
-            <div className="w-full bg-[#1A1A1A] rounded-full h-3 border border-[#2A2A2A]">
-              <div
-                className="h-3 rounded-full transition-all duration-300"
-                style={{ width: `${progress}%`, background: "linear-gradient(90deg, #F5B700, #FF8C00)" }}
-              />
-            </div>
-            <p className="text-gray-400 text-sm">{Math.round(progress)}% concluído</p>
-            <p className="text-gray-500 text-xs">O processamento pode levar alguns segundos conforme o tamanho do vídeo.</p>
-          </div>
-        )}
-
-        {stage === "error" && (
-          <div className="bg-red-900/20 border border-red-800/40 rounded-xl p-4 text-center space-y-3">
-            <AlertTriangle className="text-red-400 mx-auto" size={40} />
-            <p className="text-red-300 font-semibold">Erro na análise</p>
-            <p className="text-gray-400 text-sm">{errorMsg}</p>
-            <button className="btn-gold-outline w-full py-2" onClick={() => setStage("idle")}>
-              Tentar Novamente
-            </button>
-          </div>
-        )}
-
-        {stage === "done" && report && (
-          <div className="space-y-4">
-            {/* AI Coach Feedback */}
-            <div className="card-dark border-2 border-[#F5B700]/30 p-4 relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-2 opacity-10">
-                <Brain size={60} className="text-[#F5B700]" />
+          <div className="p-4 max-w-sm mx-auto space-y-6 text-center py-6">
+            <div className="relative w-24 h-24 mx-auto">
+              <div className="absolute inset-0 rounded-full border-4 border-[#F5B700]/10 border-t-[#F5B700] animate-spin" />
+              <div className="absolute inset-3 rounded-full border-2 border-[#F5B700]/5 border-b-[#F5B700] animate-spin [animation-duration:1.5s]" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Brain className="text-[#F5B700] animate-pulse" size={28} />
               </div>
-              <h4 className="text-[#F5B700] font-black text-xs uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
-                <Brain size={16} /> Treinador IA Ironside
-              </h4>
-              <p className="text-gray-100 text-sm leading-relaxed italic">
-                "{aiFeedback || report.summary}"
+            </div>
+            <div className="space-y-2">
+              <p className="text-white font-black text-xs uppercase tracking-widest">
+                {getProcessingText(progress)}
+              </p>
+              <div className="w-full bg-[#1A1A1A] rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="h-full transition-all duration-300 shadow-[0_0_10px_#F5B700]"
+                  style={{ width: `${progress}%`, background: "linear-gradient(90deg, #F5B700, #FF8C00)" }}
+                />
+              </div>
+              <div className="flex justify-between text-[8px] text-gray-500 font-bold uppercase tracking-widest">
+                <span>Leitura Biomecânica: {Math.round(progress)}%</span>
+                <span>Status: Ativo</span>
+              </div>
+              <p className="text-[#F5B700] text-[10px] font-black uppercase tracking-widest animate-pulse mt-4">
+                {biomechThinkingMessages[statusIdx]}
               </p>
             </div>
+          </div>
+        )}
 
-            {/* Score */}
-            <div className="card-dark border border-[#2A2A2A] p-4 text-center">
-              <p className="text-gray-400 text-xs uppercase tracking-wider mb-2">Score Técnico</p>
-              <div
-                className="w-20 h-20 rounded-full border-4 flex items-center justify-center mx-auto"
-                style={{ borderColor: scoreColor, background: `${scoreColor}15` }}
-              >
-                <span className="font-black text-2xl" style={{ color: scoreColor }}>{report.score}</span>
-              </div>
-              <p className="text-gray-300 text-xs mt-2">de 100 pontos</p>
-              <p className="text-gray-200 text-sm mt-3">{report.summary}</p>
-            </div>
-
-            {/* Key metrics */}
-            <div className="card-dark border border-[#2A2A2A] p-4">
-              <h4 className="text-[#F5B700] font-bold text-sm uppercase tracking-wider mb-3">Métricas Principais</h4>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-[#0A0A0A] rounded-xl p-3">
-                  <p className="text-gray-400 text-xs">Cotovelo Esq.</p>
-                  <p className="text-white font-bold text-lg">{report.metrics.avgLeftElbow.toFixed(1)}°</p>
-                </div>
-                <div className="bg-[#0A0A0A] rounded-xl p-3">
-                  <p className="text-gray-400 text-xs">Cotovelo Dir.</p>
-                  <p className="text-white font-bold text-lg">{report.metrics.avgRightElbow.toFixed(1)}°</p>
-                </div>
-                <div className="bg-[#0A0A0A] rounded-xl p-3">
-                  <p className="text-gray-400 text-xs">Simetria</p>
-                  <p className="font-bold text-lg" style={{ color: report.metrics.symmetry < 8 ? "#4ade80" : "#ef4444" }}>
-                    {report.metrics.symmetry.toFixed(1)}°
-                  </p>
-                </div>
-                <div className="bg-[#0A0A0A] rounded-xl p-3 flex items-center gap-2">
-                  <Clock size={14} className={report.metrics.pauseDetected ? "text-green-400" : "text-red-400"} />
-                  <div>
-                    <p className="text-gray-400 text-xs">Pausa</p>
-                    <p className="font-bold text-sm" style={{ color: report.metrics.pauseDetected ? "#4ade80" : "#ef4444" }}>
-                      {report.metrics.pauseDetected ? `${(report.metrics.pauseDurationMs / 1000).toFixed(1)}s` : "Não detectada"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Strengths */}
-            {report.strengths.length > 0 && (
-              <div className="card-dark border border-green-800/30 p-4">
-                <h4 className="text-green-400 font-bold text-sm mb-2 flex items-center gap-1">
-                  <CheckCircle size={15} /> Pontos Fortes
-                </h4>
-                {report.strengths.map((s, i) => (
-                  <p key={i} className="text-gray-200 text-sm py-1">• {s}</p>
-                ))}
-              </div>
-            )}
-
-            {/* Flags */}
-            {report.flags.length > 0 && (
-              <div className="card-dark border border-yellow-800/30 p-4">
-                <h4 className="text-[#F5B700] font-bold text-sm mb-2 flex items-center gap-1">
-                  <AlertTriangle size={15} /> Atenção
-                </h4>
-                {report.flags.map((f, i) => (
-                  <p key={i} className="text-gray-200 text-sm py-1">• {f}</p>
-                ))}
-              </div>
-            )}
-
-            {/* Suggestions */}
-            {report.suggestions.length > 0 && (
-              <div className="card-dark border border-blue-800/30 p-4">
-                <h4 className="text-blue-400 font-bold text-sm mb-2">Sugestões</h4>
-                {report.suggestions.map((s, i) => (
-                  <p key={i} className="text-gray-200 text-sm py-1">• {s}</p>
-                ))}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <button className="flex-1 btn-gold py-2.5 text-sm font-bold" onClick={() => { setStage("idle"); setReport(null); setProgress(0); }}>
-                Reanalisar
-              </button>
-              <button className="flex-1 btn-gold-outline py-2.5 text-sm" onClick={loadHistory}>
-                Histórico
+        {/* ── ERROR STATE ── */}
+        {stage === "error" && (
+          <div className="p-4 max-w-sm mx-auto">
+            <div className="bg-red-900/20 border border-red-800/40 rounded-xl p-8 text-center space-y-4">
+              <AlertTriangle className="text-red-400 mx-auto" size={40} />
+              <p className="text-white font-black uppercase text-sm">Erro de Protocolo</p>
+              <p className="text-gray-400 text-xs">{errorMsg}</p>
+              <button className="w-full bg-[#F5B700] text-black py-3 rounded-xl font-black text-xs uppercase tracking-widest" onClick={() => setStage("idle")}>
+                Tentar Novamente
               </button>
             </div>
           </div>
         )}
 
-        {/* History */}
-        {showHistory && (
-          <div className="card-dark border border-[#2A2A2A] p-4">
-            <h4 className="text-[#F5B700] font-bold text-sm mb-3 uppercase tracking-wider">
-              Análises Anteriores
-            </h4>
-            {pastReports.length === 0 ? (
-              <p className="text-gray-500 text-sm text-center py-2">Nenhuma análise encontrada</p>
-            ) : (
-              pastReports.map(r => (
-                <div key={r.id} className="bg-[#0A0A0A] rounded-xl p-3 mb-2 flex items-center justify-between border border-[#2A2A2A]">
-                  <div>
-                    <p className="text-gray-300 text-xs">{new Date(r.created_at).toLocaleDateString("pt-BR")}</p>
+        {/* ── DONE: VISUAL TAB ── */}
+        {stage === "done" && report && activeTab === "visual" && (
+          <div className="p-4 space-y-3 max-w-4xl mx-auto">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gradient-to-br from-[#111] to-black border border-white/5 p-4 rounded-xl text-center">
+                <p className="text-gray-500 text-[8px] uppercase font-black mb-1">Score Eficiência</p>
+                <div className="flex items-end justify-center gap-1">
+                  <span className="text-3xl font-black text-white">{report.score}</span>
+                  <span className="text-[#F5B700] text-[10px] font-bold mb-1">PTS</span>
+                </div>
+              </div>
+              <div className="bg-gradient-to-br from-[#111] to-black border border-white/5 p-4 rounded-xl text-center">
+                <p className="text-gray-500 text-[8px] uppercase font-black mb-1">Reps Validadas</p>
+                <div className="flex items-end justify-center gap-1">
+                  <span className="text-3xl font-black text-white">{report.metrics.repCount}</span>
+                  <span className="text-green-500 text-[10px] font-bold mb-1">REP</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-[#111] to-black border border-white/5 p-4 rounded-xl">
+              <p className="text-gray-500 text-[8px] uppercase font-black mb-3">Diagnóstico Integrado</p>
+              <A2ARichReport rawText={aiFeedback || report.summary} />
+            </div>
+
+            {report.flags.length > 0 && (
+              <div className="bg-yellow-500/5 border border-yellow-500/20 p-4 rounded-xl">
+                <p className="text-[#F5B700] text-[8px] font-black uppercase mb-2 flex items-center gap-1.5">
+                  <AlertTriangle size={12} /> Alertas
+                </p>
+                <ul className="space-y-1">
+                  {report.flags.map((f, i) => <li key={i} className="text-white text-xs flex gap-2"><span className="text-[#F5B700]">•</span>{f}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── DONE: CRITICAL TAB ── */}
+        {stage === "done" && report && activeTab === "critical" && (
+          <div className="p-4 space-y-3 max-w-4xl mx-auto">
+            <div className="bg-gradient-to-b from-[#111] to-black border border-[#F5B700]/20 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-[#F5B700]/10 rounded-xl">
+                    <Brain className="text-[#F5B700]" size={20} />
                   </div>
-                  <div
-                    className="w-12 h-12 rounded-full border-2 flex items-center justify-center"
-                    style={{ borderColor: r.score >= 85 ? "#4ade80" : r.score >= 65 ? "#F5B700" : "#ef4444" }}
-                  >
-                    <span className="font-black text-sm" style={{ color: r.score >= 85 ? "#4ade80" : r.score >= 65 ? "#F5B700" : "#ef4444" }}>
-                      {r.score}
-                    </span>
+                  <div>
+                    <h3 className="text-white font-black text-xs uppercase tracking-widest">Feedback do Treinador IA</h3>
+                    <p className="text-gray-500 text-[8px] uppercase font-bold">Diagnóstico por Inteligência Artificial</p>
                   </div>
                 </div>
-              ))
+                {/* A2A Neural Status LEDs */}
+                <div className="flex gap-2 bg-black/40 p-2 rounded-xl border border-white/5">
+                  <div className="flex flex-col items-center gap-1">
+                    <div className={`h-1.5 w-1.5 rounded-full transition-all duration-500 ${aiFeedback.includes("CLAUDE_OPUS") ? "bg-green-500 shadow-[0_0_10px_#22c55e]" : "bg-gray-700"}`} />
+                    <span className="text-[6px] text-gray-500 font-black uppercase tracking-tighter">OPUS</span>
+                  </div>
+                  <div className="w-[1px] h-4 bg-white/10 self-center" />
+                  <div className="flex flex-col items-center gap-1">
+                    <div className={`h-1.5 w-1.5 rounded-full transition-all duration-500 ${aiFeedback.includes("GEMINI_ACTIVE") ? "bg-green-500 shadow-[0_0_10px_#22c55e]" : "bg-gray-700"}`} />
+                    <span className="text-[6px] text-gray-500 font-black uppercase tracking-tighter">G-3.1</span>
+                  </div>
+                </div>
+              </div>
+              <div className="text-sm leading-relaxed">
+                <A2ARichReport rawText={aiFeedback} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="bg-green-500/5 border border-green-500/20 p-4 rounded-xl">
+                <h4 className="text-green-500 font-black text-[8px] uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                  <CheckCircle size={14} /> Pontos Fortes
+                </h4>
+                <ul className="space-y-2">
+                  {report.strengths.map((s, i) => <li key={i} className="text-white text-xs flex gap-2"><span className="text-green-500">•</span>{s}</li>)}
+                </ul>
+              </div>
+              <div className="bg-yellow-500/5 border border-yellow-500/20 p-4 rounded-xl">
+                <h4 className="text-[#F5B700] font-black text-[8px] uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                  <AlertTriangle size={14} /> Pontos de Melhoria
+                </h4>
+                <ul className="space-y-2">
+                  {report.flags.map((f, i) => <li key={i} className="text-white text-xs flex gap-2"><span className="text-[#F5B700]">•</span>{f}</li>)}
+                </ul>
+              </div>
+            </div>
+            
+            {/* specialist team footer info */}
+            <div className="p-3 bg-white/5 border border-white/5 rounded-xl flex items-center justify-between">
+               <p className="text-gray-600 text-[8px] font-bold uppercase tracking-[0.2em]">Sincronia A2A v2.1 Ativa</p>
+               <div className="flex items-center gap-2">
+                 <div className="h-1 w-1 rounded-full bg-green-500"></div>
+                 <span className="text-gray-500 text-[8px] font-black uppercase">Staff Técnico OK</span>
+               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── DONE: BIOMETRIC TAB ── */}
+        {stage === "done" && report && activeTab === "biometric" && (
+          <div className="p-4 space-y-3 max-w-4xl mx-auto">
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: "Angulação Esq.", value: `${report.metrics.avgLeftElbow.toFixed(1)}°`, status: "NOMINAL" },
+                { label: "Angulação Dir.", value: `${report.metrics.avgRightElbow.toFixed(1)}°`, status: "NOMINAL" },
+                {
+                  label: "Diferença Axial",
+                  value: `${report.metrics.symmetry.toFixed(1)}°`,
+                  status: report.metrics.symmetry < 8 ? "EXCELENTE" : "CRÍTICO",
+                  alert: report.metrics.symmetry >= 8,
+                },
+                {
+                  label: "Pausa no Peito",
+                  value: report.metrics.pauseDetected ? `${(report.metrics.pauseDurationMs / 1000).toFixed(1)}s` : "SEM PAUSA",
+                  status: report.metrics.pauseDetected ? "VÁLIDA" : "NULA",
+                },
+              ].map((stat, i) => (
+                <div key={i} className="bg-gradient-to-br from-[#111] to-black border border-white/5 p-4 rounded-xl">
+                  <p className="text-gray-500 text-[8px] uppercase font-black tracking-widest mb-1">{stat.label}</p>
+                  <p className={`text-2xl font-black mb-2 ${"alert" in stat && stat.alert ? "text-red-400" : "text-white"}`}>{stat.value}</p>
+                  <div className={`inline-block px-2 py-0.5 rounded-full text-[7px] font-black border ${
+                    stat.status === "OPTIMAL" || stat.status === "ACTIVE" || stat.status === "NOMINAL"
+                      ? "text-green-400 border-green-400/20 bg-green-400/5"
+                      : "text-red-400 border-red-400/20 bg-red-400/5"
+                  }`}>{stat.status}</div>
+                </div>
+              ))}
+            </div>
+
+            {report.suggestions.length > 0 && (
+              <div className="bg-[#0A0A0A] border border-white/5 p-5 rounded-2xl">
+                <h3 className="text-white font-black text-xs uppercase tracking-widest mb-4">Reajustes Biomecânicos</h3>
+                <div className="space-y-3">
+                  {report.suggestions.map((s, i) => (
+                    <div key={i} className="bg-[#111] border border-white/5 p-4 rounded-xl flex items-start gap-3">
+                      <div className="bg-[#F5B700] text-black text-[9px] font-black w-6 h-6 flex items-center justify-center rounded-lg flex-shrink-0">{i + 1}</div>
+                      <p className="text-gray-300 text-xs leading-relaxed">{s}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
+          </div>
+        )}
+
+        {/* ── HISTORY ── */}
+        {showHistory && (
+          <div className="p-4 max-w-2xl mx-auto">
+            <div className="bg-black border border-[#2A2A2A] p-6 rounded-2xl">
+              <div className="flex justify-between items-center mb-6">
+                <h4 className="text-[#F5B700] font-black text-xs uppercase tracking-widest flex items-center gap-2">
+                  <FileText size={14} /> Histórico de Diagnósticos
+                </h4>
+                <button onClick={() => setShowHistory(false)} className="text-gray-500 hover:text-white transition-colors">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="space-y-3">
+                {pastReports.length === 0 ? (
+                  <p className="text-gray-500 text-xs text-center py-8 italic">Nenhum dado encontrado para este registro.</p>
+                ) : pastReports.map(r => (
+                  <div key={r.id} className="bg-gradient-to-r from-[#111] to-black rounded-2xl p-4 flex gap-4 border border-white/5 relative group">
+                    <div
+                      className="w-12 h-12 rounded-2xl border-2 flex flex-col items-center justify-center bg-black flex-shrink-0"
+                      style={{ borderColor: r.score >= 85 ? "#4ade80" : r.score >= 65 ? "#F5B700" : "#ef4444" }}
+                    >
+                      <span className="text-[8px] font-black text-gray-500 uppercase leading-none mb-0.5">Score</span>
+                      <span className="font-black text-lg" style={{ color: r.score >= 85 ? "#4ade80" : r.score >= 65 ? "#F5B700" : "#ef4444" }}>
+                        {r.score}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0 pr-8">
+                      <p className="text-gray-500 text-[8px] font-bold uppercase tracking-widest mb-1">
+                        {new Date(r.created_at).toLocaleDateString("pt-BR")} · {new Date(r.created_at).toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                      <p className="text-gray-300 text-[10px] leading-tight line-clamp-2 italic">
+                        "{r.report_summary}"
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => deleteAnalysis(r.id)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all active:scale-90"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
+
+      {/* ── BOTTOM ACTION BAR (only when done) ── */}
+      {stage === "done" && report && (
+        <div className="flex-shrink-0 bg-[#080808] border-t border-white/10 p-3">
+          <div className="flex items-center gap-2 max-w-4xl mx-auto">
+            <button
+              onClick={shareReport}
+              className="flex-1 bg-[#25D366] hover:bg-[#128C7E] text-white py-4 rounded-xl font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-[#25D366]/20 active:scale-95 transition-all"
+            >
+              <Share2 size={18} /> Compartilhar Laudo Pro
+            </button>
+            <button
+              onClick={refetchAIFeedback}
+              title="Aprimorar Protocolo"
+              className="flex-shrink-0 bg-white/5 hover:bg-white/10 text-[#F5B700] p-4 rounded-xl border border-white/10 transition-all active:scale-95"
+            >
+              <Activity size={18} />
+            </button>
+            <button
+              onClick={resetAnalysis}
+              title="Reiniciar"
+              className="flex-shrink-0 bg-red-500/10 hover:bg-red-500/20 text-red-400 p-4 rounded-xl border border-red-500/20 transition-all active:scale-95"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

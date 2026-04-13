@@ -1,17 +1,28 @@
 import { useLocation, Link } from "wouter";
-import { Home, Dumbbell, Play, Trophy, Heart, Users } from "lucide-react";
+import { Home, Dumbbell, Play, Trophy, Users, Cpu, Heart } from "lucide-react";
+import { useAuth } from "../contexts/AuthContext";
 
-const tabs = [
+const TABS_CONFIG = [
   { path: "/", label: "Início", icon: Home },
   { path: "/treinos", label: "Treinos", icon: Dumbbell },
-  { path: "/videos", label: "Vídeos", icon: Play },
-  { path: "/campeonatos", label: "Campeonatos", icon: Trophy },
+  { path: "/videos", label: "Lab", icon: Play },
+  { path: "/campeonatos", label: "Eventos", icon: Trophy },
   { path: "/saude", label: "Saúde", icon: Heart },
-  { path: "/treinador", label: "Treinador", icon: Users },
+  { path: "/coach", label: "Coach", icon: Users },
+  { path: "/settings", label: "A2A Hub", icon: Cpu },
 ];
 
 export default function BottomNav() {
   const [location] = useLocation();
+  const { role, permissions } = useAuth();
+
+  const visibleTabs = TABS_CONFIG.filter((t) => {
+    if (role === 'athlete') return true;
+    if (role === 'coach') {
+      return permissions.includes(t.path) && t.path !== '/settings' && t.path !== '/treinador';
+    }
+    return false;
+  });
 
   return (
     <nav
@@ -20,7 +31,7 @@ export default function BottomNav() {
       data-testid="bottom-nav"
     >
       <div className="flex items-center justify-around px-1 py-2">
-        {tabs.map(({ path, label, icon: Icon }) => {
+        {visibleTabs.map(({ path, label, icon: Icon }) => {
           const isActive = location === path;
           return (
             <Link

@@ -1,0 +1,22 @@
+{
+  "version": "2.1",
+  "kit_id": "ironpress-multi-agent-kit",
+  "routing": {
+    "architect": {
+      "provider": "anthropic",
+      "model": "claude-3-opus-20240229",
+      "role": "Architect",
+      "specialty": "Logic, Planning, Biomechanical Theory"
+    },
+    "executor": {
+      "provider": "google",
+      "model": "gemini-1.5-pro-latest",
+      "role": "Executor",
+      "specialty": "Coding, Data Processing, Context Analysis"
+    }
+  },
+  "communication": {
+    "protocol": "A2A v2.1",
+    "format": "JSON/YAML"
+  }
+}

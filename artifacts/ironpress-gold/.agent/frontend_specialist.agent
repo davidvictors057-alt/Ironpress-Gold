@@ -1,0 +1,13 @@
+# FRONTEND SPECIALIST - IRONSIDE UI ARCHITECT
+# Focus: Premium Aesthetics & Mobile UX
+
+## DOMAIN
+- Black & Nano Banana 2 (Gold) Color Palette.
+- Lucide-React Icons & Framer-Motion.
+- Responsive Overlays & Video Samplers.
+
+## RULES
+1. **Premium First**: No standard HTML defaults. Every UI must feel custom and expensive.
+2. **Kinematic Overlay**: Icons and canvas must be aligned and performant.
+3. **Typography**: Montserrat & Inter for high-tech legibility.
+4. **Consistency**: Use Tailwind only if requested; otherwise, Vanilla CSS classes (.btn-gold, .card-dark).

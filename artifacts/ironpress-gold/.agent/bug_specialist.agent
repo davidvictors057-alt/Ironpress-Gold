@@ -1,0 +1,12 @@
+# BUG SPECIALIST - IRONSIDE NEURAL GUARD
+# Focus: Data Integrity & Database Sync
+
+## DOMAIN
+- Supabase Integration (Hormone Protocol, Health Metrics, Workouts).
+- UUID Generation & Row Consistency.
+- Video Storage & Path Management.
+
+## RULES
+1. **Precision**: If a database error occurs, trace the column constraints and UUIDs.
+2. **Synchronization**: Always verify if the client state reflects the Supabase state.
+3. **Prevention**: Log warnings for any potential null values or primary key conflicts.

@@ -11,7 +11,7 @@ export interface FrameLandmarks {
   confidence: number;
 }
 
-const LANDMARK_IDX = {
+export const LANDMARK_IDX = {
   LEFT_SHOULDER: 11,
   RIGHT_SHOULDER: 12,
   LEFT_ELBOW: 13,
@@ -23,17 +23,19 @@ const LANDMARK_IDX = {
 export async function sampleVideoFrames(
   videoElement: HTMLVideoElement,
   onProgress: (pct: number) => void,
-  sampleEveryNthFrame = 5
+  sampleEveryNthFrame = 5,
+  onFrame?: (landmarks: any) => void
 ): Promise<FrameLandmarks[]> {
   const lm = await getPoseLandmarker();
-  const results: FrameLandmarks[] = [];
-  const duration = videoElement.duration;
-  let frameIdx = 0;
+    const results: FrameLandmarks[] = [];
+    const duration = videoElement.duration;
+    let frameIdx = 0;
+    let lastBestPose: any = null;
 
-  return new Promise((resolve, reject) => {
-    let resolved = false;
+    return new Promise((resolve, reject) => {
+      let resolved = false;
 
-    const finalize = () => {
+      const finalize = () => {
       if (resolved) return;
       resolved = true;
       onProgress(100);
@@ -59,8 +61,59 @@ export async function sampleVideoFrames(
             metadata.mediaTime * 1000
           );
           if (result.landmarks && result.landmarks.length > 0) {
-            const pose = result.landmarks[0];
-            const lmConf = result.worldLandmarks?.[0];
+            let bestIdx = 0;
+            let bestScore = -Infinity;
+            
+            result.landmarks.forEach((pose, idx) => {
+              const pShL = pose[LANDMARK_IDX.LEFT_SHOULDER];
+              const pShR = pose[LANDMARK_IDX.RIGHT_SHOULDER];
+              const pElL = pose[LANDMARK_IDX.LEFT_ELBOW];
+              const pElR = pose[LANDMARK_IDX.RIGHT_ELBOW];
+              if (!pShL || !pShR) return;
+
+              // 1. Horizontal/Vertical Bias (Anti-Spotter Elite)
+              const dx = Math.abs(pShL.x - pShR.x);
+              const dy = Math.abs(pShL.y - pShR.y);
+              const ratio = dx / (dy + 0.01);
+              const ratioScore = Math.min(ratio, 5.0); // Bota peso na horizontalidade
+              const yAvg = (pShL.y + pShR.y) / 2;
+
+              // 2. Vertical Position (Athlete is at the bottom)
+              const verticalScore = yAvg * 20;
+
+              // 3. Size Bias (Athlete is closer)
+              const sizeScore = dx * 15;
+
+              // 4. Persistence
+              let persistenceScore = 0;
+              if (lastBestPose) {
+                const prevY = (lastBestPose[LANDMARK_IDX.LEFT_SHOULDER].y + lastBestPose[LANDMARK_IDX.RIGHT_SHOULDER].y) / 2;
+                persistenceScore = 1.0 / (1.0 + Math.abs(yAvg - prevY) * 20);
+              }
+
+              const totalScore = (ratioScore * 10) + (verticalScore * 1.5) + (sizeScore * 5) + (persistenceScore * 10);
+              
+              if (totalScore > bestScore) {
+                bestScore = totalScore;
+                bestIdx = idx;
+              }
+            });
+
+            let pose = result.landmarks[bestIdx];
+            
+            // Simple Smoothing (Moving Average)
+            if (lastBestPose) {
+              pose = pose.map((v: any, i: number) => ({
+                x: v.x * 0.7 + lastBestPose[i].x * 0.3,
+                y: v.y * 0.7 + lastBestPose[i].y * 0.3,
+                z: v.z * 0.7 + lastBestPose[i].z * 0.3,
+                visibility: v.visibility
+              }));
+            }
+            lastBestPose = pose;
+
+            const lmConf = result.worldLandmarks?.[bestIdx];
+            if (onFrame) onFrame(pose);
             results.push({
               timestampMs: metadata.mediaTime * 1000,
               leftShoulder: pose[LANDMARK_IDX.LEFT_SHOULDER],
@@ -99,15 +152,21 @@ async function fallbackSample(
   onProgress: (pct: number) => void,
   results: FrameLandmarks[]
 ): Promise<FrameLandmarks[]> {
-  const steps = Math.min(60, Math.floor(duration * 10));
+  // Increase sampling density for fallback to match cinematic precision (10fps min)
+  const steps = Math.min(120, Math.max(30, Math.floor(duration * 10)));
+  
   for (let i = 0; i <= steps; i++) {
     const t = (i / steps) * duration;
     onProgress((i / steps) * 100);
-    await seekTo(video, t);
+    
     try {
+      await seekTo(video, t);
       const result = lm.detectForVideo(video, t * 1000);
-      if (result.landmarks?.length > 0) {
+      
+      if (result.landmarks && result.landmarks.length > 0) {
         const pose = result.landmarks[0];
+        const lmConf = result.worldLandmarks?.[0];
+        
         results.push({
           timestampMs: t * 1000,
           leftShoulder: pose[LANDMARK_IDX.LEFT_SHOULDER],
@@ -116,10 +175,13 @@ async function fallbackSample(
           rightElbow: pose[LANDMARK_IDX.RIGHT_ELBOW],
           leftWrist: pose[LANDMARK_IDX.LEFT_WRIST],
           rightWrist: pose[LANDMARK_IDX.RIGHT_WRIST],
-          confidence: 0.6,
+          confidence: lmConf ? lmConf[LANDMARK_IDX.LEFT_SHOULDER].visibility ?? 0.6 : 0.6,
         });
       }
-    } catch {}
+    } catch (err) {
+      console.warn(`Fallback sample error at ${t}s:`, err);
+      // Continue to next frame instead of failing entirely
+    }
   }
   return results;
 }
