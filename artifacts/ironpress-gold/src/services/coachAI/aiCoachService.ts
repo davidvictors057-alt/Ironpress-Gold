@@ -1,5 +1,6 @@
 import { BenchMetrics } from "../biomech/benchMetrics";
 import { supabase } from "../../lib/supabase";
+import { getEnv } from "../../lib/env";
 
 // Multi-Agent Types
 export type TaskType = 'PLANNING' | 'IMPLEMENTATION' | 'HYBRID';
@@ -153,8 +154,8 @@ A modalidade [${ctx.workouts?.[0]?.split('(')[1]?.replace(')', '') || 'RAW'}] de
 // FUNÇÕES EXPORTADAS
 // ============================================================
 export async function getCoachIAFeedback(metrics: BenchMetrics, videoTitle: string, profile: any, modality: string = "RAW"): Promise<string> {
-  const apiKey = import.meta.env.VITE_AI_API_KEY;
-  const anthropicKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  const apiKey = getEnv('VITE_AI_API_KEY');
+  const anthropicKey = getEnv('VITE_ANTHROPIC_API_KEY');
   return await dispatchMultiAgentTask(
     `[LABORATÓRIO BIOMECÂNICO] Analise para o vídeo "${videoTitle}" de modalidade declarada como [${modality.toUpperCase()}]: ${JSON.stringify(metrics)}`,
     'HYBRID', apiKey, anthropicKey
@@ -162,8 +163,8 @@ export async function getCoachIAFeedback(metrics: BenchMetrics, videoTitle: stri
 }
 
 export async function getGeneralTrainingFeedback(history: any[], query: string, profile: any, audioPayload?: { data: string; mimeType: string }): Promise<string> {
-  const apiKey = import.meta.env.VITE_AI_API_KEY;
-  const anthropicKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  const apiKey = getEnv('VITE_AI_API_KEY');
+  const anthropicKey = getEnv('VITE_ANTHROPIC_API_KEY');
   return await dispatchMultiAgentTask(
     `[CONSULTA DO ATLETA]: ${query}`,
     'HYBRID', apiKey, anthropicKey, audioPayload
@@ -171,7 +172,7 @@ export async function getGeneralTrainingFeedback(history: any[], query: string, 
 }
 
 export async function getChampionshipSimulatorInsight(history: any[], comp: any, profile: any, attempts: number[]): Promise<{ probability: number; comment: string }> {
-  const apiKey = import.meta.env.VITE_AI_API_KEY;
+  const apiKey = getEnv('VITE_AI_API_KEY');
   const ctx = await getIntegratedIronsideContext();
 
   const prompt = `
@@ -194,8 +195,8 @@ RETORNE SOMENTE JSON: {"probability": <número>, "comment": "<texto limpo>"}
 }
 
 export async function testAIConnection(): Promise<{ success: boolean; gemini: boolean; claude: boolean; message: string }> {
-  const geminiKey = import.meta.env.VITE_AI_API_KEY;
-  const anthropicKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  const geminiKey = getEnv('VITE_AI_API_KEY');
+  const anthropicKey = getEnv('VITE_ANTHROPIC_API_KEY');
   return {
     success: !!geminiKey,
     gemini: !!geminiKey,

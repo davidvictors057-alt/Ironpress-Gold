@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
@@ -80,9 +81,34 @@ app.post('/api/ai/executor', async (req, res) => {
 const publicPath = path.join(__dirname, 'dist');
 app.use(express.static(publicPath));
 
-// 4. Fallback para SPA (Single Page Application)
+// 4. Fallback para SPA com Injeção de Variáveis Dinâmicas
 app.get('/*', (req, res) => {
-  res.sendFile(path.join(publicPath, 'index.html'));
+  const indexPath = path.join(publicPath, 'index.html');
+  
+  fs.readFile(indexPath, 'utf8', (err, data) => {
+    if (err) {
+      return res.status(500).send('Erro ao carregar o Ironside Bunker.');
+    }
+
+    // Injetar variáveis de ambiente VITE_ para o Frontend
+    const envVars = {
+      VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL,
+      VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY,
+      VITE_AI_API_KEY: process.env.VITE_AI_API_KEY,
+      VITE_ANTHROPIC_API_KEY: process.env.VITE_ANTHROPIC_API_KEY
+    };
+
+    const scriptInjection = `
+    <script>
+      window.ENV = ${JSON.stringify(envVars)};
+      // Compatibilidade com import.meta.env
+      window.import_meta_env = window.ENV;
+    </script>
+    `;
+    
+    const injectedData = data.replace('<head>', `<head>${scriptInjection}`);
+    res.send(injectedData);
+  });
 });
 
 const PORT = process.env.PORT || 8080;
