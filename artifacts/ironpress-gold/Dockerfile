@@ -12,8 +12,8 @@ COPY artifacts/ironpress-gold ./artifacts/ironpress-gold
 COPY lib ./lib
 COPY attached_assets ./attached_assets
 
-# Instalar TODAS as dependências da raiz para evitar erros de filtro/referência
-RUN pnpm install --frozen-lockfile
+# Instalar TODAS as dependências da raiz de forma flexível (sem travar o lockfile)
+RUN pnpm install --no-frozen-lockfile
 
 # Realizar o build do app
 WORKDIR /app/artifacts/ironpress-gold
